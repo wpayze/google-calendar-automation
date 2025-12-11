@@ -9,21 +9,10 @@ router = APIRouter(tags=["Webhook"])
 @router.post(
     "/webhook",
     summary="Webhook de reservas",
-    description="Recibe el payload grande de VAPI, limpia tool/arguments y ejecuta la acción.",
+    description="Recibe el payload grande de VAPI, limpia tool/arguments y ejecuta la accion.",
 )
 async def handle_webhook(
-    payload: dict = Body(
-        ...,
-        example={
-            "tool": "check_availability",
-            "arguments": {
-                "name": "Juan Perez",
-                "date": "2025-12-15",
-                "time": "19:30"
-            },
-            "extra": "cualquier otro dato se ignora",
-        },
-    ),
+    payload: dict = Body(...),
     service: ReservationService = Depends(ReservationService),
 ) -> dict:
     try:
@@ -32,4 +21,11 @@ async def handle_webhook(
         raise HTTPException(status_code=400, detail=str(exc))
 
     result = await service.dispatch(clean_payload)
-    return {"status": "ok", "tool": clean_payload.tool, "result": result}
+    return {
+        "results": [
+            {
+                "toolCallId": clean_payload.tool_call_id,
+                "result": result,
+            }
+        ]
+    }

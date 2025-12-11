@@ -73,7 +73,7 @@ class ReservationService:
     def _extract_time_window(self, arguments: Dict[str, Any]) -> Tuple[str, str, str]:
         date_str = arguments.get("date")
         time_str = arguments.get("time")
-        duration_minutes = int(arguments.get("duration_minutes", 60))
+        duration_minutes = 60 # default duration
         tz_str = arguments.get("timezone", "Europe/Madrid")
 
         if not date_str or not time_str:
@@ -112,6 +112,11 @@ class ReservationService:
         }
 
     async def create_reservation(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        # Check availability first to avoid double booking
+        availability = await self.check_availability(arguments)
+        if not availability.get("available", False):
+            return {"created": False, "reason": "not_available", "busy": availability.get("busy")}
+
         start_iso, end_iso, tz_str = self._extract_time_window(arguments)
         name = arguments.get("name", "Invitado")
         summary = f"Cita agendada con {name}"
@@ -119,7 +124,7 @@ class ReservationService:
             f"Nombre: {name}\n"
             f"Fecha: {arguments.get('date')}\n"
             f"Hora: {arguments.get('time')}\n"
-            f"Duracion: {arguments.get('duration_minutes', 60)} minutos\n"
+            f"Duracion: 60 minutos\n"
             f"Zona horaria: {tz_str}"
         )
 
