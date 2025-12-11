@@ -74,7 +74,7 @@ class ReservationService:
         date_str = arguments.get("date")
         time_str = arguments.get("time")
         duration_minutes = int(arguments.get("duration_minutes", 60))
-        tz_str = arguments.get("timezone", "UTC")
+        tz_str = arguments.get("timezone", "Europe/Madrid")
 
         if not date_str or not time_str:
             raise ValueError("Both 'date' (YYYY-MM-DD) and 'time' (HH:MM) are required.")
@@ -113,8 +113,15 @@ class ReservationService:
 
     async def create_reservation(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         start_iso, end_iso, tz_str = self._extract_time_window(arguments)
-        summary = arguments.get("summary", "Reservation")
-        description = arguments.get("description", "")
+        name = arguments.get("name", "Invitado")
+        summary = f"Cita agendada con {name}"
+        description = (
+            f"Nombre: {name}\n"
+            f"Fecha: {arguments.get('date')}\n"
+            f"Hora: {arguments.get('time')}\n"
+            f"Duracion: {arguments.get('duration_minutes', 60)} minutos\n"
+            f"Zona horaria: {tz_str}"
+        )
 
         event_body = {
             "summary": summary,
@@ -144,6 +151,17 @@ class ReservationService:
             start_iso, end_iso, tz_str = self._extract_time_window(arguments)
             updates["start"] = {"dateTime": start_iso, "timeZone": tz_str}
             updates["end"] = {"dateTime": end_iso, "timeZone": tz_str}
+        if "name" in arguments:
+            updates["summary"] = f"Cita agendada con {arguments['name']}"
+            # Only rewrite description if we also have date/time to avoid losing data
+            if "date" in arguments and "time" in arguments:
+                updates["description"] = (
+                    f"Nombre: {arguments['name']}\n"
+                    f"Fecha: {arguments.get('date')}\n"
+                    f"Hora: {arguments.get('time')}\n"
+                    f"Duracion: {arguments.get('duration_minutes', 60)} minutos\n"
+                    f"Zona horaria: {arguments.get('timezone', 'Europe/Madrid')}"
+                )
 
         if not updates:
             raise ValueError("No fields provided to update.")

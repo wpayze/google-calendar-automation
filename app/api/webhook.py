@@ -17,10 +17,9 @@ async def handle_webhook(
         example={
             "tool": "check_availability",
             "arguments": {
-                "date": "2024-12-15",
-                "time": "19:30",
-                "duration_minutes": 60,
-                "timezone": "UTC",
+                "name": "Juan Perez",
+                "date": "2025-12-15",
+                "time": "19:30"
             },
             "extra": "cualquier otro dato se ignora",
         },
