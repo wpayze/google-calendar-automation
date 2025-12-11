@@ -1,9 +1,12 @@
+import logging
+
 from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.services.payload_cleaner import CleanPayload, extract_tool_payload
 from app.services.reservation_service import ReservationService
 
 router = APIRouter(tags=["Webhook"])
+logger = logging.getLogger("webhook")
 
 
 @router.post(
@@ -15,6 +18,7 @@ async def handle_webhook(
     payload: dict = Body(...),
     service: ReservationService = Depends(ReservationService),
 ) -> dict:
+    logger.info("Incoming VAPI payload: %s", payload)
     try:
         clean_payload: CleanPayload = extract_tool_payload(payload)
     except ValueError as exc:  # keep VAPI noise from propagating
