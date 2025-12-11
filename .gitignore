@@ -1,0 +1,31 @@
+﻿# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+
+# Environments
+.env
+.venv/
+venv/
+.env.local
+
+# Editors / tools
+.vscode/
+.idea/
+
+# Coverage / tests
+.coverage
+htmlcov/
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Containers / builds
+*.log
+build/
+dist/
