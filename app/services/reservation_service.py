@@ -30,6 +30,8 @@ class ReservationService:
                 return await self.update_reservation(args)
             if tool == "delete_reservation":
                 return await self.delete_reservation(args)
+            if tool == "list_available_slots":
+                return await self.list_available_slots(args)
             if tool == "ping":
                 return {"pong": True}
         except ValueError as exc:
@@ -187,3 +189,83 @@ class ReservationService:
             calendarId=self.calendar_id, eventId=event_id
         ).execute()
         return {"deleted": True, "event_id": event_id}
+
+    async def list_available_slots(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Lista slots disponibles para un día dado dentro de una ventana horaria.
+        Args esperados:
+        - date (YYYY-MM-DD) obligatorio
+        - start_time (HH:MM) opcional, por defecto 09:00
+        - end_time (HH:MM) opcional, por defecto 18:00
+        - duration_minutes opcional, por defecto 60
+        - timezone opcional, por defecto Europe/Madrid
+        """
+        date_str = arguments.get("date")
+        if not date_str:
+            raise ValueError("Missing 'date' to list available slots.")
+
+        start_time_str = arguments.get("start_time", "09:00")
+        end_time_str = arguments.get("end_time", "18:00")
+        duration_minutes = int(arguments.get("duration_minutes", 60))
+        tz_str = arguments.get("timezone", "Europe/Madrid")
+
+        try:
+            tzinfo = ZoneInfo(tz_str)
+        except Exception:
+            tzinfo = timezone.utc
+            tz_str = "UTC"
+
+        day_start = datetime.fromisoformat(f"{date_str}T{start_time_str}")
+        day_end = datetime.fromisoformat(f"{date_str}T{end_time_str}")
+        day_start = day_start.replace(tzinfo=tzinfo)
+        day_end = day_end.replace(tzinfo=tzinfo)
+
+        # Obtener slots ocupados
+        body = {
+            "timeMin": day_start.isoformat(),
+            "timeMax": day_end.isoformat(),
+            "items": [{"id": self.calendar_id}],
+            "timeZone": tz_str,
+        }
+        response = self.service.freebusy().query(body=body).execute()
+        busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get(
+            "busy", []
+        )
+
+        # Construir lista de slots libres
+        slots = []
+        cursor = day_start
+        while cursor + timedelta(minutes=duration_minutes) <= day_end:
+            candidate_start = cursor
+            candidate_end = cursor + timedelta(minutes=duration_minutes)
+
+            overlap = False
+            for busy in busy_slots:
+                busy_start = datetime.fromisoformat(busy["start"])
+                busy_end = datetime.fromisoformat(busy["end"])
+                # detectar solapamiento
+                if candidate_start < busy_end and candidate_end > busy_start:
+                    overlap = True
+                    break
+
+            if not overlap:
+                slots.append(
+                    {
+                        "start": candidate_start.isoformat(),
+                        "end": candidate_end.isoformat(),
+                        "timeZone": tz_str,
+                    }
+                )
+
+            cursor = candidate_end
+
+        return {
+            "available_slots": slots,
+            "busy": busy_slots,
+            "window": {
+                "start": day_start.isoformat(),
+                "end": day_end.isoformat(),
+                "timeZone": tz_str,
+            },
+            "duration_minutes": duration_minutes,
+        }
