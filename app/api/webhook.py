@@ -11,7 +11,7 @@ logger = logging.getLogger("webhook")
 
 @router.post(
     "/webhook",
-    summary="Webhook de reservas",
+    summary="Webhook de reservas Google Calendar",
     description="Recibe el payload grande de VAPI, limpia tool/arguments y ejecuta la accion.",
 )
 async def handle_webhook(
