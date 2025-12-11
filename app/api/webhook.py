@@ -22,8 +22,15 @@ async def handle_webhook(
     try:
         clean_payload: CleanPayload = extract_tool_payload(payload)
     except ValueError as exc:  # keep VAPI noise from propagating
+        logger.warning("Payload validation error: %s", exc)
         raise HTTPException(status_code=400, detail=str(exc))
 
+    logger.info(
+        "Parsed payload tool=%s tool_call_id=%s args=%s",
+        clean_payload.tool,
+        clean_payload.tool_call_id,
+        clean_payload.arguments,
+    )
     result = await service.dispatch(clean_payload)
     return {
         "results": [

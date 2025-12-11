@@ -29,14 +29,31 @@ def extract_tool_payload(payload: Dict[str, Any]) -> CleanPayload:
     tool_call_id: str = "0"
     arguments: Dict[str, Any] = {}
 
-    # VAPI format
+    def extract_from_call(call: Dict[str, Any]) -> None:
+        nonlocal tool, tool_call_id, arguments
+        tool_call_id = call.get("id", tool_call_id)
+        tool_candidate = call.get("name") or call.get("tool")  # some payloads might use 'tool'
+        func = call.get("function") if isinstance(call, dict) else {}
+        if not tool_candidate and isinstance(func, dict):
+            tool_candidate = func.get("name")
+        tool = tool or tool_candidate
+        args = call.get("arguments") or func.get("arguments") if isinstance(func, dict) else {}
+        # arguments sometimes come as JSON string; try to parse
+        if isinstance(args, str):
+            import json
+            try:
+                args = json.loads(args)
+            except Exception:
+                args = {}
+        arguments = args or {}
+
+    # VAPI format: toolCalls or toolCallList
     message = payload.get("message", {})
-    tool_call_list = message.get("toolCallList") if isinstance(message, dict) else None
-    if tool_call_list and isinstance(tool_call_list, list) and len(tool_call_list) > 0:
-        first_call = tool_call_list[0] or {}
-        tool = first_call.get("name")
-        tool_call_id = first_call.get("id", "0")
-        arguments = first_call.get("arguments", {}) or {}
+    if isinstance(message, dict):
+        tool_calls = message.get("toolCalls") or message.get("toolCallList")
+        if tool_calls and isinstance(tool_calls, list) and len(tool_calls) > 0:
+            first_call = tool_calls[0] or {}
+            extract_from_call(first_call)
 
     # Fallback simple format
     if tool is None:
