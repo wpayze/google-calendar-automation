@@ -61,6 +61,11 @@ def extract_tool_payload(payload: Dict[str, Any]) -> CleanPayload:
         tool_call_id = payload.get("toolCallId", tool_call_id)
         arguments = payload.get("arguments", {}) or {}
 
+    # Attach customer number if present
+    customer = payload.get("customer") or (message.get("customer") if isinstance(message, dict) else {})
+    if isinstance(customer, dict) and customer.get("number") and "customer_number" not in arguments:
+        arguments["customer_number"] = customer.get("number")
+
     if tool is None:
         raise ValueError("Payload missing required 'tool' key.")
 

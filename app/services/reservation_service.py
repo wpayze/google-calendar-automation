@@ -121,13 +121,17 @@ class ReservationService:
 
         start_iso, end_iso, tz_str = self._extract_time_window(arguments)
         name = arguments.get("name", "Invitado")
+        customer_number = arguments.get("customer_number", "No proporcionado")
+        reforma = arguments.get("reforma", "No especificada")
         summary = f"Cita agendada con {name}"
         description = (
+            f"Telefono: {customer_number}\n"
             f"Nombre: {name}\n"
             f"Fecha: {arguments.get('date')}\n"
             f"Hora: {arguments.get('time')}\n"
             f"Duracion: 60 minutos\n"
-            f"Zona horaria: {tz_str}"
+            f"Zona horaria: {tz_str}\n"
+            f"Al usuario le interesa {reforma}"
         )
 
         event_body = {
@@ -162,12 +166,16 @@ class ReservationService:
             updates["summary"] = f"Cita agendada con {arguments['name']}"
             # Only rewrite description if we also have date/time to avoid losing data
             if "date" in arguments and "time" in arguments:
+                customer_number = arguments.get("customer_number", "No proporcionado")
+                reforma = arguments.get("reforma", "No especificada")
                 updates["description"] = (
+                    f"Telefono: {customer_number}\n"
                     f"Nombre: {arguments['name']}\n"
                     f"Fecha: {arguments.get('date')}\n"
                     f"Hora: {arguments.get('time')}\n"
                     f"Duracion: {arguments.get('duration_minutes', 60)} minutos\n"
-                    f"Zona horaria: {arguments.get('timezone', 'Europe/Madrid')}"
+                    f"Zona horaria: {arguments.get('timezone', 'Europe/Madrid')}\n"
+                    f"Al usuario le interesa {reforma}"
                 )
 
         if not updates:
