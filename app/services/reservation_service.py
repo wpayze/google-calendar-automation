@@ -32,8 +32,6 @@ class ReservationService:
                 return await self.delete_reservation(args)
             if tool == "list_available_slots":
                 return await self.list_available_slots(args)
-            if tool == "convert_date":
-                return await self.convert_date(args)
             if tool == "ping":
                 return {"pong": True}
         except ValueError as exc:
@@ -278,109 +276,4 @@ class ReservationService:
                 "timeZone": tz_str,
             },
             "duration_minutes": duration_minutes,
-        }
-
-    async def convert_date(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Convierte frases relativas a fechas/horas en valores concretos basados en la fecha actual (server).
-        Espera:
-        - date_text (str): e.g. "mañana", "pasado mañana", "dentro de una semana", "proximo lunes"
-        - time_text (opcional): e.g. "por la tarde", "por la mañana", "mediodia", "por la noche"
-        Retorna: today_date, proposed_date (YYYY-MM-DD), proposed_time (HH:MM), timezone.
-        """
-        date_text = (arguments.get("date_text") or arguments.get("date") or "").lower().strip()
-        time_text = (arguments.get("time_text") or arguments.get("time") or "").lower().strip()
-        tz_str = arguments.get("timezone", "Europe/Madrid")
-
-        try:
-            tzinfo = ZoneInfo(tz_str)
-        except Exception:
-            tzinfo = timezone.utc
-            tz_str = "UTC"
-
-        now = datetime.now(tzinfo)
-        today_date = now.date()
-
-        def next_weekday(target_weekday: int) -> datetime.date:
-            days_ahead = (target_weekday - today_date.weekday() + 7) % 7
-            if days_ahead == 0:
-                days_ahead = 7
-            return today_date + timedelta(days=days_ahead)
-
-        def parse_date_phrase(text: str) -> datetime.date:
-            if not text:
-                raise ValueError("Missing 'date_text' to convert date.")
-            if "hoy" in text:
-                assumptions.append("Interpretado 'hoy' como fecha actual.")
-                return today_date
-            if "mañana" in text and "pasado" not in text:
-                assumptions.append("Interpretado 'mañana' como +1 día.")
-                return today_date + timedelta(days=1)
-            if "pasado mañana" in text:
-                assumptions.append("Interpretado 'pasado mañana' como +2 días.")
-                return today_date + timedelta(days=2)
-            if "fin de semana" in text:
-                assumptions.append("Interpretado 'próximo fin de semana' como sábado siguiente.")
-                return next_weekday(5)  # Saturday
-            if "semana" in text:
-                assumptions.append("Interpretado 'en una semana' como +7 días.")
-                return today_date + timedelta(days=7)
-            days_map = {
-                "lunes": 0,
-                "martes": 1,
-                "miercoles": 2,
-                "miércoles": 2,
-                "jueves": 3,
-                "viernes": 4,
-                "sabado": 5,
-                "sábado": 5,
-                "domingo": 6,
-            }
-            for key, idx in days_map.items():
-                if key in text:
-                    assumptions.append(f"Interpretado '{key}' como próximo {key}.")
-                    return next_weekday(idx)
-            # fallback: try YYYY-MM-DD
-            try:
-                return datetime.fromisoformat(text).date()
-            except Exception:
-                raise ValueError(f"Cannot parse date_text '{text}'")
-
-        def parse_time_phrase(text: str) -> str:
-            if not text:
-                assumptions.append("Sin hora explícita; usando 17:00 (tarde).")
-                return "17:00"  # default afternoon
-            mapping = {
-                "mañana": "10:00",
-                "manana": "10:00",
-                "mediodia": "12:00",
-                "mediodía": "12:00",
-                "tarde": "17:00",
-                "esta tarde": "17:00",
-                "noche": "20:00",
-            }
-            for key, val in mapping.items():
-                if key in text:
-                    if "hora explícita" not in assumptions:
-                        assumptions.append(f"Interpretado '{key}' como {val}.")
-                    return val
-            # if text looks like HH:MM keep it
-            if ":" in text:
-                return text
-            assumptions.append("No se reconoció hora; usando 17:00.")
-            return "17:00"
-
-        assumptions: list[str] = []
-        proposed_date = parse_date_phrase(date_text)
-        proposed_time = parse_time_phrase(time_text)
-        confidence = "assumed" if assumptions else "exact"
-
-        return {
-            "today_date": today_date.isoformat(),
-            "proposed_date": proposed_date.isoformat(),
-            "proposed_time": proposed_time,
-            "timezone": tz_str,
-            "phrase": {"date_text": date_text, "time_text": time_text},
-            "assumptions": assumptions,
-            "confidence": confidence,
         }
