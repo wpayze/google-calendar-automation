@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, time
 from typing import Any, Dict, Tuple
 from zoneinfo import ZoneInfo
 
@@ -93,7 +93,31 @@ class ReservationService:
 
         return start.isoformat(), end.isoformat(), tz_str
 
+    def _ensure_business_hours(self, date_str: str, time_str: str, tz_str: str) -> None:
+        if not date_str or not time_str:
+            return
+        try:
+            tzinfo = ZoneInfo(tz_str)
+        except Exception:
+            tzinfo = timezone.utc
+        dt = datetime.fromisoformat(f"{date_str}T{time_str}").replace(tzinfo=tzinfo)
+        weekday = dt.weekday()  # 0 = Monday, 6 = Sunday
+        if weekday >= 5:
+            raise ValueError("Outside business hours (Mon-Fri 09:00-14:00 and 16:00-19:00).")
+        t = dt.time()
+        morning_start = time(9, 0)
+        morning_end = time(14, 0)
+        afternoon_start = time(16, 0)
+        afternoon_end = time(19, 0)
+        if not ((morning_start <= t < morning_end) or (afternoon_start <= t < afternoon_end)):
+            raise ValueError("Outside business hours (Mon-Fri 09:00-14:00 and 16:00-19:00).")
+
     async def check_availability(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_business_hours(
+            arguments.get("date"),
+            arguments.get("time"),
+            arguments.get("timezone", "Europe/Madrid"),
+        )
         start_iso, end_iso, tz_str = self._extract_time_window(arguments)
 
         body = {
@@ -114,6 +138,11 @@ class ReservationService:
         }
 
     async def create_reservation(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        self._ensure_business_hours(
+            arguments.get("date"),
+            arguments.get("time"),
+            arguments.get("timezone", "Europe/Madrid"),
+        )
         # Check availability first to avoid double booking
         availability = await self.check_availability(arguments)
         if not availability.get("available", False):
@@ -159,6 +188,11 @@ class ReservationService:
         if "description" in arguments:
             updates["description"] = arguments["description"]
         if "date" in arguments and "time" in arguments:
+            self._ensure_business_hours(
+                arguments.get("date"),
+                arguments.get("time"),
+                arguments.get("timezone", "Europe/Madrid"),
+            )
             start_iso, end_iso, tz_str = self._extract_time_window(arguments)
             updates["start"] = {"dateTime": start_iso, "timeZone": tz_str}
             updates["end"] = {"dateTime": end_iso, "timeZone": tz_str}
