@@ -8,6 +8,7 @@ SUPPORTED_TOOLS = {
     "update_reservation",
     "delete_reservation",
     "list_available_slots",
+    "convert_date",
     "ping",
 }
 
