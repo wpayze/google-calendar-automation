@@ -5,8 +5,6 @@ from pydantic import BaseModel, Field, ValidationError
 SUPPORTED_TOOLS = {
     "check_availability",
     "create_reservation",
-    "update_reservation",
-    "delete_reservation",
     "list_next_slots",
     "ping",
 }
@@ -32,20 +30,23 @@ def extract_tool_payload(payload: Dict[str, Any]) -> CleanPayload:
     def extract_from_call(call: Dict[str, Any]) -> None:
         nonlocal tool, tool_call_id, arguments
         tool_call_id = call.get("id", tool_call_id)
-        tool_candidate = call.get("name") or call.get("tool")  # some payloads might use 'tool'
+        tool_candidate = call.get("name") or call.get("tool")
         func = call.get("function") if isinstance(call, dict) else {}
         if not tool_candidate and isinstance(func, dict):
             tool_candidate = func.get("name")
         tool = tool or tool_candidate
-        args = call.get("arguments") or func.get("arguments") if isinstance(func, dict) else {}
-        # arguments sometimes come as JSON string; try to parse
+
+        args = call.get("arguments") or (func.get("arguments") if isinstance(func, dict) else {})
+        # arguments sometimes come como string JSON
         if isinstance(args, str):
             import json
             try:
                 args = json.loads(args)
             except Exception:
                 args = {}
-        arguments = args or {}
+        if not isinstance(args, dict):
+            args = {}
+        arguments = args
 
     # VAPI format: toolCalls or toolCallList
     message = payload.get("message", {})

@@ -1,6 +1,6 @@
-﻿import os
+import os
 from datetime import datetime, timedelta, timezone, time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 from zoneinfo import ZoneInfo
 
 from google.oauth2.service_account import Credentials
@@ -8,11 +8,49 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from app.services.payload_cleaner import CleanPayload
+from app.services.business_hours import BUSINESS_HOURS, MORNING_END
 
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
 DEFAULT_TOP_N = 5
 DEFAULT_DURATION_MINUTES = 60
 DEFAULT_TIMEZONE = "Europe/Madrid"
+MAX_SLOT_SEARCH_DAYS = 14
+
+
+def _align_to_slot(dt: datetime, slot_minutes: int) -> datetime:
+    """Round up to the next slot boundary."""
+    dt = dt.replace(second=0, microsecond=0)
+    minute_total = dt.hour * 60 + dt.minute
+    remainder = minute_total % slot_minutes
+    if remainder == 0:
+        return dt
+    next_minutes = minute_total - remainder + slot_minutes
+    hours, minutes = divmod(next_minutes, 60)
+    return dt.replace(hour=hours % 24, minute=minutes, second=0, microsecond=0)
+
+
+def _intervals_for_date(current_date: datetime, block: str) -> List[Tuple[datetime, datetime]]:
+    """Return working intervals for a date, filtered by block if provided."""
+    tzinfo = current_date.tzinfo
+    raw_intervals = BUSINESS_HOURS.get(current_date.weekday(), [])
+
+    def block_filter(start_t, end_t) -> bool:
+        if not block:
+            return True
+        if block in {"morning", "manana", "mañana"}:
+            return start_t < MORNING_END
+        if block in {"afternoon", "tarde"}:
+            return start_t >= MORNING_END
+        return True
+
+    intervals: List[Tuple[datetime, datetime]] = []
+    for start_t, end_t in raw_intervals:
+        if not block_filter(start_t, end_t):
+            continue
+        start_dt = datetime.combine(current_date.date(), start_t, tzinfo=tzinfo)
+        end_dt = datetime.combine(current_date.date(), end_t, tzinfo=tzinfo)
+        intervals.append((start_dt, end_dt))
+    return intervals
 
 
 class ReservationService:
@@ -29,10 +67,6 @@ class ReservationService:
                 return await self.check_availability(args)
             if tool == "create_reservation":
                 return await self.create_reservation(args)
-            if tool == "update_reservation":
-                return await self.update_reservation(args)
-            if tool == "delete_reservation":
-                return await self.delete_reservation(args)
             if tool == "list_next_slots":
                 return await self.list_next_slots(args)
             if tool == "ping":
@@ -77,8 +111,8 @@ class ReservationService:
     def _extract_time_window(self, arguments: Dict[str, Any]) -> Tuple[str, str, str]:
         date_str = arguments.get("date")
         time_str = arguments.get("time")
-        duration_minutes = 60  # default duration
-        tz_str = arguments.get("timezone", DEFAULT_TIMEZONE)
+        duration_minutes = DEFAULT_DURATION_MINUTES
+        tz_str = DEFAULT_TIMEZONE
 
         if not date_str or not time_str:
             raise ValueError("Both 'date' (YYYY-MM-DD) and 'time' (HH:MM) are required.")
@@ -95,31 +129,23 @@ class ReservationService:
 
         return start.isoformat(), end.isoformat(), tz_str
 
-    def _ensure_business_hours(self, date_str: str, time_str: str, tz_str: str) -> None:
+    def _ensure_business_hours(self, date_str: str, time_str: str) -> None:
         if not date_str or not time_str:
             return
-        try:
-            tzinfo = ZoneInfo(tz_str)
-        except Exception:
-            tzinfo = timezone.utc
+        tzinfo = ZoneInfo(DEFAULT_TIMEZONE)
         dt = datetime.fromisoformat(f"{date_str}T{time_str}").replace(tzinfo=tzinfo)
-        weekday = dt.weekday()  # 0 = Monday, 6 = Sunday
-        if weekday >= 5:
-            raise ValueError("Outside business hours (Mon-Fri 09:00-14:00 and 16:00-19:00).")
-        t = dt.time()
-        morning_start = time(9, 0)
-        morning_end = time(14, 0)
-        afternoon_start = time(16, 0)
-        afternoon_end = time(19, 0)
-        if not ((morning_start <= t < morning_end) or (afternoon_start <= t < afternoon_end)):
-            raise ValueError("Outside business hours (Mon-Fri 09:00-14:00 and 16:00-19:00).")
+        intervals = _intervals_for_date(dt, block="")
+        if not intervals:
+            raise ValueError("Outside business hours.")
+        inside = any(start <= dt < end for start, end in intervals)
+        if not inside:
+            raise ValueError("Outside business hours.")
 
     async def check_availability(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Consulta disponibilidad para un slot específico."""
         self._ensure_business_hours(
             arguments.get("date"),
             arguments.get("time"),
-            DEFAULT_TIMEZONE,
         )
         args_with_tz = {**arguments, "timezone": DEFAULT_TIMEZONE}
         start_iso, end_iso, tz_str = self._extract_time_window(args_with_tz)
@@ -146,7 +172,6 @@ class ReservationService:
         self._ensure_business_hours(
             arguments.get("date"),
             arguments.get("time"),
-            DEFAULT_TIMEZONE,
         )
         availability = await self.check_availability(arguments)
         if not availability.get("available", False):
@@ -180,61 +205,6 @@ class ReservationService:
             "created": True,
             "message": f"Reserva confirmada para {arguments.get('date')} a las {arguments.get('time')} ({tz_str})",
         }
-
-    async def update_reservation(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        event_id = arguments.get("event_id")
-        if not event_id:
-            raise ValueError("Missing 'event_id' to update the reservation.")
-
-        updates: Dict[str, Any] = {}
-        if "summary" in arguments:
-            updates["summary"] = arguments["summary"]
-        if "description" in arguments:
-            updates["description"] = arguments["description"]
-        if "date" in arguments and "time" in arguments:
-            self._ensure_business_hours(
-                arguments.get("date"),
-                arguments.get("time"),
-                DEFAULT_TIMEZONE,
-            )
-            args_with_tz = {**arguments, "timezone": DEFAULT_TIMEZONE}
-            start_iso, end_iso, tz_str = self._extract_time_window(args_with_tz)
-            updates["start"] = {"dateTime": start_iso, "timeZone": tz_str}
-            updates["end"] = {"dateTime": end_iso, "timeZone": tz_str}
-        if "name" in arguments:
-            updates["summary"] = f"Cita agendada con {arguments['name']}"
-            if "date" in arguments and "time" in arguments:
-                customer_number = arguments.get("customer_number", "No proporcionado")
-                reforma = arguments.get("reforma", "No especificada")
-                updates["description"] = (
-                    f"Telefono: {customer_number}\n"
-                    f"Nombre: {arguments['name']}\n"
-                    f"Fecha: {arguments.get('date')}\n"
-                    f"Hora: {arguments.get('time')}\n"
-                    f"Duracion: {arguments.get('duration_minutes', 60)} minutos\n"
-                    f"Zona horaria: {arguments.get('timezone', DEFAULT_TIMEZONE)}\n"
-                    f"Al usuario le interesa {reforma}"
-                )
-
-        if not updates:
-            raise ValueError("No fields provided to update.")
-
-        updated = (
-            self.service.events()
-            .patch(calendarId=self.calendar_id, eventId=event_id, body=updates)
-            .execute()
-        )
-        return {"updated": True, "event": updated}
-
-    async def delete_reservation(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        event_id = arguments.get("event_id")
-        if not event_id:
-            raise ValueError("Missing 'event_id' to delete the reservation.")
-
-        self.service.events().delete(
-            calendarId=self.calendar_id, eventId=event_id
-        ).execute()
-        return {"deleted": True, "event_id": event_id}
 
     async def list_next_slots(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -270,39 +240,33 @@ class ReservationService:
 
         normalized_desde = search_date.isoformat()
 
-        if block in {"morning", "manana", "mañana"}:
-            windows = [("09:00", "14:00")]
-        elif block in {"afternoon", "tarde"}:
-            windows = [("16:00", "19:00")]
-        else:
-            windows = [("09:00", "14:00"), ("16:00", "19:00")]
-
-        slots: list[Dict[str, Any]] = []
-        max_days = 14  # buscar hasta 2 semanas
+        slots: List[Dict[str, Any]] = []
         day_offset = 0
 
-        while len(slots) < top_n and day_offset < max_days:
+        while len(slots) < top_n and day_offset < MAX_SLOT_SEARCH_DAYS:
             current_date = search_date + timedelta(days=day_offset)
             day_offset += 1
 
-            for start_time_str, end_time_str in windows:
-                day_start = datetime.fromisoformat(f"{current_date}T{start_time_str}").replace(tzinfo=tzinfo)
-                day_end = datetime.fromisoformat(f"{current_date}T{end_time_str}").replace(tzinfo=tzinfo)
+            intervals = _intervals_for_date(datetime.combine(current_date, datetime.min.time(), tzinfo), block)
+            if not intervals:
+                continue
 
+            for start_dt, end_dt in intervals:
                 body = {
-                    "timeMin": day_start.isoformat(),
-                    "timeMax": day_end.isoformat(),
+                    "timeMin": start_dt.isoformat(),
+                    "timeMax": end_dt.isoformat(),
                     "items": [{"id": self.calendar_id}],
                     "timeZone": tz_str,
                 }
                 response = self.service.freebusy().query(body=body).execute()
                 busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get("busy", [])
 
-                cursor = day_start
+                cursor = start_dt
                 if current_date == now.date() and cursor < now:
                     cursor = now
+                cursor = _align_to_slot(cursor, duration_minutes)
 
-                while cursor + timedelta(minutes=duration_minutes) <= day_end and len(slots) < top_n:
+                while cursor + timedelta(minutes=duration_minutes) <= end_dt and len(slots) < top_n:
                     candidate_start = cursor
                     candidate_end = cursor + timedelta(minutes=duration_minutes)
 
