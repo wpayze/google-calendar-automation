@@ -7,7 +7,7 @@ SUPPORTED_TOOLS = {
     "create_reservation",
     "update_reservation",
     "delete_reservation",
-    "list_available_slots",
+    "list_next_slots",
     "ping",
 }
 

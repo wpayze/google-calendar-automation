@@ -10,6 +10,9 @@ from googleapiclient.errors import HttpError
 from app.services.payload_cleaner import CleanPayload
 
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
+DEFAULT_TOP_N = 5
+DEFAULT_DURATION_MINUTES = 60
+DEFAULT_TIMEZONE = "Europe/Madrid"
 
 
 class ReservationService:
@@ -54,7 +57,6 @@ class ReservationService:
         if not self.calendar_id:
             raise ValueError("Missing GOOGLE_CALENDAR_ID environment variable.")
 
-        # Replace literal \n from .env with real newlines
         private_key = os.getenv("GOOGLE_PRIVATE_KEY", "").replace("\\n", "\n")
 
         info = {
@@ -63,7 +65,7 @@ class ReservationService:
             "private_key_id": os.getenv("GOOGLE_PRIVATE_KEY_ID"),
             "private_key": private_key,
             "client_email": os.getenv("GOOGLE_SERVICE_ACCOUNT_EMAIL"),
-            "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),  # optional
+            "client_id": os.getenv("GOOGLE_CLIENT_ID", ""),
             "token_uri": "https://oauth2.googleapis.com/token",
         }
 
@@ -75,8 +77,8 @@ class ReservationService:
     def _extract_time_window(self, arguments: Dict[str, Any]) -> Tuple[str, str, str]:
         date_str = arguments.get("date")
         time_str = arguments.get("time")
-        duration_minutes = 60 # default duration
-        tz_str = arguments.get("timezone", "Europe/Madrid")
+        duration_minutes = 60  # default duration
+        tz_str = arguments.get("timezone", DEFAULT_TIMEZONE)
 
         if not date_str or not time_str:
             raise ValueError("Both 'date' (YYYY-MM-DD) and 'time' (HH:MM) are required.")
@@ -113,12 +115,14 @@ class ReservationService:
             raise ValueError("Outside business hours (Mon-Fri 09:00-14:00 and 16:00-19:00).")
 
     async def check_availability(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Consulta disponibilidad para un slot específico."""
         self._ensure_business_hours(
             arguments.get("date"),
             arguments.get("time"),
-            arguments.get("timezone", "Europe/Madrid"),
+            DEFAULT_TIMEZONE,
         )
-        start_iso, end_iso, tz_str = self._extract_time_window(arguments)
+        args_with_tz = {**arguments, "timezone": DEFAULT_TIMEZONE}
+        start_iso, end_iso, tz_str = self._extract_time_window(args_with_tz)
 
         body = {
             "timeMin": start_iso,
@@ -138,17 +142,18 @@ class ReservationService:
         }
 
     async def create_reservation(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Crea una reserva y confirma si está dentro de horario disponible y laboral."""
         self._ensure_business_hours(
             arguments.get("date"),
             arguments.get("time"),
-            arguments.get("timezone", "Europe/Madrid"),
+            DEFAULT_TIMEZONE,
         )
-        # Check availability first to avoid double booking
         availability = await self.check_availability(arguments)
         if not availability.get("available", False):
             return {"created": False, "reason": "not_available", "busy": availability.get("busy")}
 
-        start_iso, end_iso, tz_str = self._extract_time_window(arguments)
+        args_with_tz = {**arguments, "timezone": DEFAULT_TIMEZONE}
+        start_iso, end_iso, tz_str = self._extract_time_window(args_with_tz)
         name = arguments.get("name", "Invitado")
         customer_number = arguments.get("customer_number", "No proporcionado")
         reforma = arguments.get("reforma", "No especificada")
@@ -170,12 +175,11 @@ class ReservationService:
             "end": {"dateTime": end_iso, "timeZone": tz_str},
         }
 
-        created = (
-            self.service.events()
-            .insert(calendarId=self.calendar_id, body=event_body)
-            .execute()
-        )
-        return {"created": True, "event": created}
+        self.service.events().insert(calendarId=self.calendar_id, body=event_body).execute()
+        return {
+            "created": True,
+            "message": f"Reserva confirmada para {arguments.get('date')} a las {arguments.get('time')} ({tz_str})",
+        }
 
     async def update_reservation(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         event_id = arguments.get("event_id")
@@ -191,14 +195,14 @@ class ReservationService:
             self._ensure_business_hours(
                 arguments.get("date"),
                 arguments.get("time"),
-                arguments.get("timezone", "Europe/Madrid"),
+                DEFAULT_TIMEZONE,
             )
-            start_iso, end_iso, tz_str = self._extract_time_window(arguments)
+            args_with_tz = {**arguments, "timezone": DEFAULT_TIMEZONE}
+            start_iso, end_iso, tz_str = self._extract_time_window(args_with_tz)
             updates["start"] = {"dateTime": start_iso, "timeZone": tz_str}
             updates["end"] = {"dateTime": end_iso, "timeZone": tz_str}
         if "name" in arguments:
             updates["summary"] = f"Cita agendada con {arguments['name']}"
-            # Only rewrite description if we also have date/time to avoid losing data
             if "date" in arguments and "time" in arguments:
                 customer_number = arguments.get("customer_number", "No proporcionado")
                 reforma = arguments.get("reforma", "No especificada")
@@ -208,7 +212,7 @@ class ReservationService:
                     f"Fecha: {arguments.get('date')}\n"
                     f"Hora: {arguments.get('time')}\n"
                     f"Duracion: {arguments.get('duration_minutes', 60)} minutos\n"
-                    f"Zona horaria: {arguments.get('timezone', 'Europe/Madrid')}\n"
+                    f"Zona horaria: {arguments.get('timezone', DEFAULT_TIMEZONE)}\n"
                     f"Al usuario le interesa {reforma}"
                 )
 
@@ -234,22 +238,21 @@ class ReservationService:
 
     async def list_available_slots(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Lista slots disponibles para un día dado dentro de una ventana horaria.
-        Args esperados:
+        Devuelve las N horas disponibles más cercanas en un bloque (mañana/tarde) para un día, a partir de 'desde'.
+        Args:
         - date (YYYY-MM-DD) obligatorio
-        - start_time (HH:MM) opcional, por defecto 09:00
-        - end_time (HH:MM) opcional, por defecto 18:00
-        - duration_minutes opcional, por defecto 60
-        - timezone opcional, por defecto Europe/Madrid
+        - block: "morning"/"manana"/"mañana" o "afternoon"/"tarde" (opcional, default todo el día)
+        - desde: fecha inicial para buscar (default hoy)
         """
         date_str = arguments.get("date")
         if not date_str:
             raise ValueError("Missing 'date' to list available slots.")
 
-        start_time_str = arguments.get("start_time", "09:00")
-        end_time_str = arguments.get("end_time", "18:00")
-        duration_minutes = int(arguments.get("duration_minutes", 60))
-        tz_str = arguments.get("timezone", "Europe/Madrid")
+        block = (arguments.get("block") or "").lower()
+        duration_minutes = DEFAULT_DURATION_MINUTES
+        top_n = DEFAULT_TOP_N
+        tz_str = DEFAULT_TIMEZONE
+        desde_str = arguments.get("desde")
 
         try:
             tzinfo = ZoneInfo(tz_str)
@@ -257,12 +260,25 @@ class ReservationService:
             tzinfo = timezone.utc
             tz_str = "UTC"
 
-        day_start = datetime.fromisoformat(f"{date_str}T{start_time_str}")
-        day_end = datetime.fromisoformat(f"{date_str}T{end_time_str}")
-        day_start = day_start.replace(tzinfo=tzinfo)
-        day_end = day_end.replace(tzinfo=tzinfo)
+        if block in {"morning", "manana", "mañana"}:
+            start_time_str, end_time_str = "09:00", "14:00"
+        elif block in {"afternoon", "tarde"}:
+            start_time_str, end_time_str = "16:00", "19:00"
+        else:
+            start_time_str, end_time_str = "09:00", "19:00"
 
-        # Obtener slots ocupados
+        day_start = datetime.fromisoformat(f"{date_str}T{start_time_str}").replace(tzinfo=tzinfo)
+        day_end = datetime.fromisoformat(f"{date_str}T{end_time_str}").replace(tzinfo=tzinfo)
+
+        if desde_str:
+            try:
+                search_start = datetime.fromisoformat(desde_str).date()
+            except Exception:
+                raise ValueError("Invalid 'desde'; expected YYYY-MM-DD.")
+            if day_start.date() < search_start:
+                day_start = datetime.combine(search_start, day_start.time(), tzinfo)
+                day_end = datetime.combine(search_start, day_end.time(), tzinfo)
+
         body = {
             "timeMin": day_start.isoformat(),
             "timeMax": day_end.isoformat(),
@@ -270,11 +286,8 @@ class ReservationService:
             "timeZone": tz_str,
         }
         response = self.service.freebusy().query(body=body).execute()
-        busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get(
-            "busy", []
-        )
+        busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get("busy", [])
 
-        # Construir lista de slots libres
         slots = []
         cursor = day_start
         while cursor + timedelta(minutes=duration_minutes) <= day_end:
@@ -285,7 +298,6 @@ class ReservationService:
             for busy in busy_slots:
                 busy_start = datetime.fromisoformat(busy["start"])
                 busy_end = datetime.fromisoformat(busy["end"])
-                # detectar solapamiento
                 if candidate_start < busy_end and candidate_end > busy_start:
                     overlap = True
                     break
@@ -301,13 +313,11 @@ class ReservationService:
 
             cursor = candidate_end
 
+        slots_sorted = sorted(slots, key=lambda s: s["start"])
+        top_slots = slots_sorted[:top_n]
+        suggested = top_slots[0] if top_slots else None
+
         return {
-            "available_slots": slots,
-            "busy": busy_slots,
-            "window": {
-                "start": day_start.isoformat(),
-                "end": day_end.isoformat(),
-                "timeZone": tz_str,
-            },
-            "duration_minutes": duration_minutes,
+            "available_slots": top_slots,
+            "suggested": suggested,
         }
