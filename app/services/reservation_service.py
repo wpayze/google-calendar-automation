@@ -33,8 +33,8 @@ class ReservationService:
                 return await self.update_reservation(args)
             if tool == "delete_reservation":
                 return await self.delete_reservation(args)
-            if tool == "list_available_slots":
-                return await self.list_available_slots(args)
+            if tool == "list_next_slots":
+                return await self.list_next_slots(args)
             if tool == "ping":
                 return {"pong": True}
         except ValueError as exc:
@@ -236,7 +236,7 @@ class ReservationService:
         ).execute()
         return {"deleted": True, "event_id": event_id}
 
-    async def list_available_slots(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def list_next_slots(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Devuelve las N horas disponibles más cercanas en un bloque (mañana/tarde) para un día, a partir de 'desde'.
         Args:
