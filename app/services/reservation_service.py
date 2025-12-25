@@ -238,16 +238,11 @@ class ReservationService:
 
     async def list_next_slots(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Devuelve las N horas disponibles más cercanas en un bloque (mañana/tarde) para un día, a partir de 'desde'.
+        Devuelve las N horas disponibles más cercanas (mañana/tarde) empezando desde 'desde' o desde hoy.
         Args:
-        - date (YYYY-MM-DD) obligatorio
         - block: "morning"/"manana"/"mañana" o "afternoon"/"tarde" (opcional, default todo el día)
-        - desde: fecha inicial para buscar (default hoy)
+        - desde: fecha inicial (YYYY-MM-DD) para comenzar la búsqueda (opcional, default hoy)
         """
-        date_str = arguments.get("date")
-        if not date_str:
-            raise ValueError("Missing 'date' to list available slots.")
-
         block = (arguments.get("block") or "").lower()
         duration_minutes = DEFAULT_DURATION_MINUTES
         top_n = DEFAULT_TOP_N
@@ -260,58 +255,66 @@ class ReservationService:
             tzinfo = timezone.utc
             tz_str = "UTC"
 
-        if block in {"morning", "manana", "mañana"}:
-            start_time_str, end_time_str = "09:00", "14:00"
-        elif block in {"afternoon", "tarde"}:
-            start_time_str, end_time_str = "16:00", "19:00"
-        else:
-            start_time_str, end_time_str = "09:00", "19:00"
-
-        day_start = datetime.fromisoformat(f"{date_str}T{start_time_str}").replace(tzinfo=tzinfo)
-        day_end = datetime.fromisoformat(f"{date_str}T{end_time_str}").replace(tzinfo=tzinfo)
-
         if desde_str:
             try:
-                search_start = datetime.fromisoformat(desde_str).date()
+                search_date = datetime.fromisoformat(desde_str).date()
             except Exception:
                 raise ValueError("Invalid 'desde'; expected YYYY-MM-DD.")
-            if day_start.date() < search_start:
-                day_start = datetime.combine(search_start, day_start.time(), tzinfo)
-                day_end = datetime.combine(search_start, day_end.time(), tzinfo)
+        else:
+            search_date = datetime.now(tzinfo).date()
 
-        body = {
-            "timeMin": day_start.isoformat(),
-            "timeMax": day_end.isoformat(),
-            "items": [{"id": self.calendar_id}],
-            "timeZone": tz_str,
-        }
-        response = self.service.freebusy().query(body=body).execute()
-        busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get("busy", [])
+        # Define ventanas por bloque
+        if block in {"morning", "manana", "mañana"}:
+            windows = [("09:00", "14:00")]
+        elif block in {"afternoon", "tarde"}:
+            windows = [("16:00", "19:00")]
+        else:
+            windows = [("09:00", "14:00"), ("16:00", "19:00")]
 
-        slots = []
-        cursor = day_start
-        while cursor + timedelta(minutes=duration_minutes) <= day_end:
-            candidate_start = cursor
-            candidate_end = cursor + timedelta(minutes=duration_minutes)
+        slots: list[Dict[str, Any]] = []
+        max_days = 14  # buscar hasta 2 semanas
+        day_offset = 0
 
-            overlap = False
-            for busy in busy_slots:
-                busy_start = datetime.fromisoformat(busy["start"])
-                busy_end = datetime.fromisoformat(busy["end"])
-                if candidate_start < busy_end and candidate_end > busy_start:
-                    overlap = True
-                    break
+        while len(slots) < top_n and day_offset < max_days:
+            current_date = search_date + timedelta(days=day_offset)
+            day_offset += 1
 
-            if not overlap:
-                slots.append(
-                    {
-                        "start": candidate_start.isoformat(),
-                        "end": candidate_end.isoformat(),
-                        "timeZone": tz_str,
-                    }
-                )
+            for start_time_str, end_time_str in windows:
+                day_start = datetime.fromisoformat(f"{current_date}T{start_time_str}").replace(tzinfo=tzinfo)
+                day_end = datetime.fromisoformat(f"{current_date}T{end_time_str}").replace(tzinfo=tzinfo)
 
-            cursor = candidate_end
+                body = {
+                    "timeMin": day_start.isoformat(),
+                    "timeMax": day_end.isoformat(),
+                    "items": [{"id": self.calendar_id}],
+                    "timeZone": tz_str,
+                }
+                response = self.service.freebusy().query(body=body).execute()
+                busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get("busy", [])
+
+                cursor = day_start
+                while cursor + timedelta(minutes=duration_minutes) <= day_end and len(slots) < top_n:
+                    candidate_start = cursor
+                    candidate_end = cursor + timedelta(minutes=duration_minutes)
+
+                    overlap = False
+                    for busy in busy_slots:
+                        busy_start = datetime.fromisoformat(busy["start"])
+                        busy_end = datetime.fromisoformat(busy["end"])
+                        if candidate_start < busy_end and candidate_end > busy_start:
+                            overlap = True
+                            break
+
+                    if not overlap:
+                        slots.append(
+                            {
+                                "start": candidate_start.isoformat(),
+                                "end": candidate_end.isoformat(),
+                                "timeZone": tz_str,
+                            }
+                        )
+
+                    cursor = candidate_end
 
         slots_sorted = sorted(slots, key=lambda s: s["start"])
         top_slots = slots_sorted[:top_n]
