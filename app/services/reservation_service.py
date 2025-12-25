@@ -1,4 +1,4 @@
-import os
+﻿import os
 from datetime import datetime, timedelta, timezone, time
 from typing import Any, Dict, Tuple
 from zoneinfo import ZoneInfo
@@ -241,7 +241,7 @@ class ReservationService:
         Devuelve las N horas disponibles más cercanas (mañana/tarde) empezando desde 'desde' o desde hoy.
         Args:
         - block: "morning"/"manana"/"mañana" o "afternoon"/"tarde" (opcional, default todo el día)
-        - desde: fecha inicial (YYYY-MM-DD) para comenzar la búsqueda (opcional, default hoy)
+        - desde: fecha inicial (YYYY-MM-DD) para comenzar la búsqueda (opcional, default hoy; si es pasada/ inválida => hoy + 7)
         """
         block = (arguments.get("block") or "").lower()
         duration_minutes = DEFAULT_DURATION_MINUTES
@@ -255,15 +255,21 @@ class ReservationService:
             tzinfo = timezone.utc
             tz_str = "UTC"
 
+        now = datetime.now(tzinfo)
+
         if desde_str:
             try:
                 search_date = datetime.fromisoformat(desde_str).date()
             except Exception:
-                raise ValueError("Invalid 'desde'; expected YYYY-MM-DD.")
+                search_date = now.date() + timedelta(days=7)
         else:
-            search_date = datetime.now(tzinfo).date()
+            search_date = now.date()
 
-        # Define ventanas por bloque
+        if search_date < now.date():
+            search_date = now.date() + timedelta(days=7)
+
+        normalized_desde = search_date.isoformat()
+
         if block in {"morning", "manana", "mañana"}:
             windows = [("09:00", "14:00")]
         elif block in {"afternoon", "tarde"}:
@@ -293,6 +299,9 @@ class ReservationService:
                 busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get("busy", [])
 
                 cursor = day_start
+                if current_date == now.date() and cursor < now:
+                    cursor = now
+
                 while cursor + timedelta(minutes=duration_minutes) <= day_end and len(slots) < top_n:
                     candidate_start = cursor
                     candidate_end = cursor + timedelta(minutes=duration_minutes)
@@ -323,4 +332,6 @@ class ReservationService:
         return {
             "available_slots": top_slots,
             "suggested": suggested,
+            "block": block or "all_day",
+            "desde": normalized_desde,
         }
