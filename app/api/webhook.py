@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Form
 from fastapi.responses import Response
 
-from app.api.whatsapp import handle_whatsapp_message
+from app.services.whatsapp import handle_whatsapp_message
 from app.services.payload_cleaner import CleanPayload, extract_tool_payload
 from app.services.reservation_service import ReservationService
 
