@@ -21,18 +21,24 @@ STATE_WAITING_DESCRIPTION = "WAITING_DESCRIPTION"
 CALCULATOR_URL = os.getenv("BUDGET_CALCULATOR_URL", "https://example.com")
 
 MENU_TEXT = (
-    "Bienvenido a EGM Grupo, soy tu asistente virtual.\n"
-    "Si estás interesado en una reforma, puedo agendar una cita para que discutamos tu proyecto. "
-    "También puedo darte más información de nuestros servicios.\n\n"
-    "1) Agendar una cita\n"
-    "2) Información\n"
-    "3) Calculadora de presupuesto online\n\n"
-    "Responde con 1, 2 o 3."
+    "👋 ¡Hola! Soy el asistente virtual de *EGM Grupo*.\n\n"
+    "Puedo ayudarte con lo siguiente:\n"
+    "🛠️ Agendar una visita para tu reforma\n"
+    "ℹ️ Conocer más sobre nuestros servicios\n"
+    "🧮 Calcular un presupuesto orientativo online\n\n"
+    "Responde con:\n"
+    "1️⃣ Agendar cita\n"
+    "2️⃣ Información\n"
+    "3️⃣ Calculadora de presupuesto"
 )
 
 INFO_TEXT = (
-    "Somos EGM Grupo. Reformas y diseño en Valencia. "
-    "Presupuestos en 48h. ¿Quieres agendar una visita?"
+    "🏗️ *EGM Grupo*\n"
+    "Reformas y diseño en Valencia.\n\n"
+    "✔️ Presupuestos en 48h\n"
+    "✔️ Proyectos a medida\n"
+    "✔️ Acompañamiento de principio a fin\n\n"
+    "¿Quieres que agendemos una visita? 😊"
 )
 
 MENU_COMMANDS = {"0", "menu", "menú", "principal", "menu principal", "menú principal"}
@@ -59,7 +65,6 @@ def init_db() -> None:
             )
             """
         )
-        # Ensure stack_json and updated_at columns exist for older DBs
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(conversation_state)")}
         if "stack_json" not in cols:
             conn.execute("ALTER TABLE conversation_state ADD COLUMN stack_json TEXT NOT NULL DEFAULT '[]'")
@@ -117,7 +122,6 @@ def reset_state(phone: str) -> None:
 
 # -------------------- Slot helpers --------------------
 def _slot_options(base_day: date) -> List[str]:
-    """Generate three slots (date+time) starting from base_day, one per day."""
     times = [time(10, 0), time(12, 0), time(16, 0)]
     slots = []
     for idx, t in enumerate(times):
@@ -127,29 +131,16 @@ def _slot_options(base_day: date) -> List[str]:
 
 
 def _format_slot_pretty(slot: str) -> str:
-    """Return human friendly slot text like '5 de Noviembre de 2025 a las 10:00'."""
     try:
         dt = datetime.strptime(slot, "%d-%m-%Y %H:%M")
     except ValueError:
         return slot
 
     months = [
-        "",
-        "Enero",
-        "Febrero",
-        "Marzo",
-        "Abril",
-        "Mayo",
-        "Junio",
-        "Julio",
-        "Agosto",
-        "Septiembre",
-        "Octubre",
-        "Noviembre",
-        "Diciembre",
+        "", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+        "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
     ]
-    month_name = months[dt.month]
-    return f"{dt.day} de {month_name} de {dt.year} a las {dt.strftime('%H:%M')}"
+    return f"{dt.day} de {months[dt.month]} de {dt.year} a las {dt.strftime('%H:%M')}"
 
 
 def build_menu(resp: MessagingResponse) -> None:
@@ -159,14 +150,14 @@ def build_menu(resp: MessagingResponse) -> None:
 def build_slot_menu(resp: MessagingResponse, slots: List[str]) -> None:
     formatted = [_format_slot_pretty(s) for s in slots]
     resp.message(
-        "Estas son las fechas más próximas disponibles.\n"
-        "Elige un horario:\n"
-        f"1) {formatted[0]}\n"
-        f"2) {formatted[1]}\n"
-        f"3) {formatted[2]}\n"
-        "4) Otra fecha\n"
-        "5) Menú principal\n\n"
-        "Responde con 1, 2, 3, 4 o 5."
+        "📅 *Fechas disponibles*\n\n"
+        "Elige el horario que mejor te venga:\n\n"
+        f"1️⃣ {formatted[0]}\n"
+        f"2️⃣ {formatted[1]}\n"
+        f"3️⃣ {formatted[2]}\n\n"
+        "4️⃣ 📆 Otra fecha\n"
+        "5️⃣ 🔙 Menú principal\n\n"
+        "Responde con el número de tu elección."
     )
 
 
@@ -187,7 +178,6 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
 
     resp = MessagingResponse()
 
-    # Global menu commands
     if lower in MENU_COMMANDS:
         reset_state(phone)
         build_menu(resp)
@@ -207,8 +197,8 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             reset_state(phone)
         elif lower in {"3", "calculadora", "presupuesto"}:
             resp.message(
-                "Te gustaría calcular un presupuesto desde la comodidad de tu casa? "
-                f"Prueba nuestro calculador de presupuestos en este enlace: {CALCULATOR_URL}"
+                "🧮 Calcula un presupuesto orientativo desde casa:\n\n"
+                f"👉 {CALCULATOR_URL}"
             )
             reset_state(phone)
         else:
@@ -220,15 +210,24 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
         if lower in {"1", "2", "3"} and len(slots) >= 3:
             chosen = slots[int(lower) - 1]
             save_state(phone, STATE_WAITING_NAME, {"chosen_slot": chosen})
-            resp.message(f"Has elegido: {_format_slot_pretty(chosen)}.\n¿Cuál es tu nombre?")
+            resp.message(
+                f"👍 Has elegido:\n"
+                f"📅 {_format_slot_pretty(chosen)}\n\n"
+                "¿Cuál es tu *nombre*?"
+            )
         elif lower in {"4", "otra", "otra fecha"}:
             save_state(phone, STATE_DATE_FREEFORM, {})
-            resp.message("¿En qué fecha te vendría bien? Formato DD-MM-YYYY. Ejemplo: 15-01-2026")
+            resp.message(
+                "📆 Perfecto.\n"
+                "Indícanos la fecha que te vendría bien.\n\n"
+                "Formato: *DD-MM-YYYY*\n"
+                "Ejemplo: 15-01-2026"
+            )
         elif lower in {"5", "menu principal", "menú principal"}:
             reset_state(phone)
             build_menu(resp)
         else:
-            resp.message("No entendí. Elige 1, 2, 3, 4 o 5. Envía 0 para menú.")
+            resp.message("❌ No entendí tu respuesta. Elige una opción válida.")
         return Response(content=str(resp), media_type="application/xml")
 
     if state == STATE_DATE_FREEFORM:
@@ -238,25 +237,32 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             save_state(phone, STATE_DATE_PICK, {"slots": slots})
             build_slot_menu(resp, slots)
         else:
-            resp.message("Formato inválido. Usa DD-MM-YYYY. Ejemplo: 15-01-2026. Envía 0 para menú.")
+            resp.message(
+                "❌ Formato inválido.\n"
+                "Usa *DD-MM-YYYY*\n"
+                "Ejemplo: 15-01-2026"
+            )
         return Response(content=str(resp), media_type="application/xml")
 
     if state == STATE_WAITING_NAME:
         if text:
             data["name"] = text
             save_state(phone, STATE_WAITING_EMAIL, data)
-            resp.message(f"Gracias {text}, ¿cuál es tu correo electrónico?")
+            resp.message(
+                f"Encantado, {text} 😊\n"
+                "¿Cuál es tu *correo electrónico*?"
+            )
         else:
-            resp.message("No entendí el nombre. Indícalo nuevamente, por favor.")
+            resp.message("❌ No entendí el nombre. Escríbelo nuevamente.")
         return Response(content=str(resp), media_type="application/xml")
 
     if state == STATE_WAITING_EMAIL:
         if text:
             data["email"] = text
             save_state(phone, STATE_WAITING_ADDRESS, data)
-            resp.message("Anota la dirección de la vivienda:")
+            resp.message("📍 Indícanos la *dirección de la vivienda*:")
         else:
-            resp.message("No entendí el correo. Escríbelo nuevamente, por favor.")
+            resp.message("❌ No entendí el correo. Escríbelo nuevamente.")
         return Response(content=str(resp), media_type="application/xml")
 
     if state == STATE_WAITING_ADDRESS:
@@ -264,60 +270,51 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             data["address"] = text
             save_state(phone, STATE_WAITING_DESCRIPTION, data)
             resp.message(
-                "Dinos brevemente qué necesitas (ejemplo: reformar mi piso, mi cocina, mi baño)."
+                "📝 Cuéntanos brevemente qué necesitas.\n\n"
+                "Ejemplos:\n"
+                "• Reforma integral\n"
+                "• Reforma de cocina\n"
+                "• Reforma de baño"
             )
         else:
-            resp.message("No entendí la dirección. Escríbela nuevamente, por favor.")
+            resp.message("❌ No entendí la dirección. Escríbela nuevamente.")
         return Response(content=str(resp), media_type="application/xml")
 
     if state == STATE_WAITING_DESCRIPTION:
         if text:
             data["description"] = text
-            slot = data.get("chosen_slot", "")
-            name = data.get("name", "")
-            email = data.get("email", "")
-            address = data.get("address", "")
-            description = data.get("description", "")
-            resp.message(
-                "Confirma los datos:\n"
-                f"Fecha: {_format_slot_pretty(slot)}\n"
-                f"Nombre: {name}\n"
-                f"Correo: {email}\n"
-                f"Dirección: {address}\n"
-                f"Proyecto: {description}\n"
-                "1. Confirmar cita\n"
-                "2. Corregir datos"
-            )
             save_state(phone, STATE_WAITING_CONFIRMATION, data)
+
+            resp.message(
+                "✅ *Revisa los datos de tu cita:*\n\n"
+                f"📅 {_format_slot_pretty(data.get('chosen_slot', ''))}\n"
+                f"👤 {data.get('name', '')}\n"
+                f"📧 {data.get('email', '')}\n"
+                f"📍 {data.get('address', '')}\n"
+                f"🛠️ {data.get('description', '')}\n\n"
+                "¿Todo es correcto?\n\n"
+                "1️⃣ Confirmar cita\n"
+                "2️⃣ Corregir datos"
+            )
         else:
-            resp.message("No entendí la descripción. Escríbela nuevamente, por favor.")
+            resp.message("❌ No entendí la descripción. Escríbela nuevamente.")
         return Response(content=str(resp), media_type="application/xml")
 
     if state == STATE_WAITING_CONFIRMATION:
-        slot = data.get("chosen_slot", "")
-        name = data.get("name", "")
-        email = data.get("email", "")
-        address = data.get("address", "")
-        description = data.get("description", "")
         if lower in {"1", "confirmar", "confirmar cita"}:
             reset_state(phone)
             resp.message(
-                f"Cita confirmada para {_format_slot_pretty(slot)}.\n"
-                f"Nombre: {name}\n"
-                f"Correo: {email}\n"
-                f"Dirección: {address}\n"
-                f"Proyecto: {description}\n"
-                "Gracias."
+                "🎉 *¡Cita confirmada!* 🎉\n\n"
+                "Gracias por confiar en *EGM Grupo*.\n"
+                "Nos pondremos en contacto contigo muy pronto 😊"
             )
         elif lower in {"2", "corregir", "corregir datos"}:
-            updated_data = {"chosen_slot": slot}
-            save_state(phone, STATE_WAITING_NAME, updated_data)
-            resp.message("Vamos a corregir los datos. ¿Cuál es tu nombre?")
+            save_state(phone, STATE_WAITING_NAME, {"chosen_slot": data.get("chosen_slot", "")})
+            resp.message("🔁 Vamos a corregir los datos.\n¿Cuál es tu nombre?")
         else:
-            resp.message("Responde 1 para confirmar o 2 para corregir los datos.")
+            resp.message("Responde 1️⃣ para confirmar o 2️⃣ para corregir.")
         return Response(content=str(resp), media_type="application/xml")
 
-    # Fallback
     reset_state(phone)
     build_menu(resp)
     return Response(content=str(resp), media_type="application/xml")
