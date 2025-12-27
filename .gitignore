@@ -29,3 +29,5 @@ Thumbs.db
 *.log
 build/
 dist/
+
+conversation_state.db

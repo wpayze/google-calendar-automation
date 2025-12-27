@@ -1,10 +1,9 @@
 import logging
 
-import random
-
 from fastapi import APIRouter, Body, Depends, HTTPException, Form
 from fastapi.responses import Response
 
+from app.api.whatsapp import handle_whatsapp_message
 from app.services.payload_cleaner import CleanPayload, extract_tool_payload
 from app.services.reservation_service import ReservationService
 
@@ -48,15 +47,10 @@ async def handle_webhook(
 @router.post(
     "/twilio/whatsapp",
     summary="Webhook WhatsApp Twilio",
-    description="Responde con un mensaje simple para pruebas.",
+    description="Flujo simple de WhatsApp con estado en SQLite.",
 )
 async def twilio_whatsapp_webhook(
     from_number: str = Form(default=None, alias="From"),
     body: str = Form(default=None, alias="Body"),
 ) -> Response:
-    greetings = [
-        "Gracias por escribirnos. No entendi que dijiste, solo se que speer se la come doblada.",
-    ]
-    message = random.choice(greetings)
-    twiml = f"<Response><Message>{message}</Message></Response>"
-    return Response(content=twiml, media_type="application/xml")
+    return handle_whatsapp_message(from_number, body)
