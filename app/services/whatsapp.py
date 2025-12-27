@@ -1,14 +1,17 @@
-import json
 import os
 import re
-import sqlite3
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Optional, Set
 
 from fastapi.responses import Response
 from twilio.twiml.messaging_response import MessagingResponse
 
-DB_PATH = os.getenv("SQLITE_DB_PATH", "conversation_state.db")
+from app.services.helpers.whatsapp_db import (
+    init_db,
+    load_state,
+    reset_state,
+    save_state,
+)
 
 STATE_IDLE = "IDLE"
 STATE_DATE_PICK = "DATE_PICK"
@@ -61,82 +64,6 @@ VALID_CHOICES: Dict[str, Optional[Set[str]]] = {
     STATE_WAITING_ADDRESS: None,      # texto libre
     STATE_WAITING_DESCRIPTION: None,  # texto libre
 }
-
-
-# -------------------- DB helpers --------------------
-def _get_db_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db() -> None:
-    conn = _get_db_conn()
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS conversation_state (
-                phone TEXT PRIMARY KEY,
-                state TEXT NOT NULL,
-                data_json TEXT NOT NULL,
-                stack_json TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-            """
-        )
-        cols = {row["name"] for row in conn.execute("PRAGMA table_info(conversation_state)")}
-        if "stack_json" not in cols:
-            conn.execute("ALTER TABLE conversation_state ADD COLUMN stack_json TEXT NOT NULL DEFAULT '[]'")
-        if "updated_at" not in cols:
-            conn.execute("ALTER TABLE conversation_state ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def load_state(phone: str) -> Dict[str, Any]:
-    conn = _get_db_conn()
-    try:
-        cur = conn.execute(
-            "SELECT phone, state, data_json FROM conversation_state WHERE phone = ?",
-            (phone,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return {"state": STATE_IDLE, "data": {}}
-        return {"state": row["state"], "data": json.loads(row["data_json"] or "{}")}
-    finally:
-        conn.close()
-
-
-def save_state(phone: str, state: str, data: Dict[str, Any]) -> None:
-    conn = _get_db_conn()
-    try:
-        conn.execute(
-            """
-            INSERT INTO conversation_state (phone, state, data_json, stack_json, updated_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(phone) DO UPDATE SET
-                state=excluded.state,
-                data_json=excluded.data_json,
-                stack_json=excluded.stack_json,
-                updated_at=excluded.updated_at
-            """,
-            (
-                phone,
-                state,
-                json.dumps(data, ensure_ascii=False),
-                "[]",
-                datetime.utcnow().isoformat(),
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def reset_state(phone: str) -> None:
-    save_state(phone, STATE_IDLE, {})
 
 
 # -------------------- Slot helpers --------------------
@@ -275,7 +202,7 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
 
     resp = MessagingResponse()
 
-    session = load_state(phone)
+    session = load_state(phone, STATE_IDLE)
     state = str(session.get("state") or STATE_IDLE)
     data: Dict[str, Any] = session.get("data") or {}
 
@@ -293,7 +220,7 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
 
         if text == "2":
             resp.message(INFO_TEXT)
-            reset_state(phone)
+            reset_state(phone, STATE_IDLE)
             return xml(resp)
 
         if text == "3":
@@ -301,7 +228,7 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
                 "🧮 Calcula un presupuesto orientativo desde casa:\n\n"
                 f"👉 {CALCULATOR_URL}"
             )
-            reset_state(phone)
+            reset_state(phone, STATE_IDLE)
             return xml(resp)
 
     # DATE_PICK (solo números)
@@ -317,7 +244,7 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
         if choice in {"1", "2", "3"}:
             if len(slots) < 3:
                 resp.message("❌ No hay horarios disponibles. Volviendo al menú.")
-                reset_state(phone)
+                reset_state(phone, STATE_IDLE)
                 build_menu(resp)
                 return xml(resp)
 
@@ -336,7 +263,7 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             return xml(resp)
 
         if choice == "5":
-            reset_state(phone)
+            reset_state(phone, STATE_IDLE)
             build_menu(resp)
             return xml(resp)
 
@@ -444,7 +371,7 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
                 build_slot_menu(resp, slots)
                 return xml(resp)
 
-            reset_state(phone)
+            reset_state(phone, STATE_IDLE)
             build_menu(resp)
             return xml(resp)
 
@@ -453,7 +380,7 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             return xml(resp)
 
         if choice == "1":
-            reset_state(phone)
+            reset_state(phone, STATE_IDLE)
             resp.message(
                 "🎉 *¡Cita confirmada!* 🎉\n\n"
                 "Gracias por confiar en *EGM Grupo*.\n"
@@ -466,7 +393,7 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             resp.message("🔁 Vamos a corregir los datos.\n¿Cuál es tu nombre?")
             return xml(resp)
         if choice == "3":
-            reset_state(phone)
+            reset_state(phone, STATE_IDLE)
             resp.message("Cita cancelada. Volviendo al menu principal.")
             build_menu(resp)
             return xml(resp)
@@ -475,6 +402,6 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
         render_state_prompt(resp, STATE_WAITING_CONFIRMATION, data)
         return xml(resp)
 
-    reset_state(phone)
+    reset_state(phone, STATE_IDLE)
     build_menu(resp)
     return xml(resp)
