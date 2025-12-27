@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 from datetime import date, datetime, time, timedelta
 from typing import Any, Dict, List, Optional, Set
@@ -17,6 +18,11 @@ STATE_WAITING_EMAIL = "WAITING_EMAIL"
 STATE_WAITING_ADDRESS = "WAITING_ADDRESS"
 STATE_WAITING_CONFIRMATION = "WAITING_CONFIRMATION"
 STATE_WAITING_DESCRIPTION = "WAITING_DESCRIPTION"
+
+NAME_MIN_LEN = 3
+NAME_MAX_LEN = 60
+ADDRESS_MAX_LEN = 120
+DESCRIPTION_MAX_LEN = 300
 
 CALCULATOR_URL = os.getenv(
     "BUDGET_CALCULATOR_URL",
@@ -362,6 +368,11 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             render_state_prompt(resp, STATE_WAITING_NAME, data)
             return xml(resp)
 
+        if not (NAME_MIN_LEN <= len(text) <= NAME_MAX_LEN):
+            resp.message(f"Nombre debe tener entre {NAME_MIN_LEN} y {NAME_MAX_LEN} caracteres.")
+            render_state_prompt(resp, STATE_WAITING_NAME, data)
+            return xml(resp)
+
         data["name"] = text
         save_state(phone, STATE_WAITING_EMAIL, data)
         render_state_prompt(resp, STATE_WAITING_EMAIL, data)
@@ -371,6 +382,11 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
     if state == STATE_WAITING_EMAIL:
         if not text:
             resp.message("❌ No entendí el correo. Escríbelo nuevamente.")
+            render_state_prompt(resp, STATE_WAITING_EMAIL, data)
+            return xml(resp)
+
+        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", text):
+            resp.message("Correo no válido. Intenta nuevamente.")
             render_state_prompt(resp, STATE_WAITING_EMAIL, data)
             return xml(resp)
 
@@ -386,6 +402,11 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             render_state_prompt(resp, STATE_WAITING_ADDRESS, data)
             return xml(resp)
 
+        if len(text) > ADDRESS_MAX_LEN:
+            resp.message(f"Dirección demasiado larga. Máximo {ADDRESS_MAX_LEN} caracteres.")
+            render_state_prompt(resp, STATE_WAITING_ADDRESS, data)
+            return xml(resp)
+
         data["address"] = text
         save_state(phone, STATE_WAITING_DESCRIPTION, data)
         render_state_prompt(resp, STATE_WAITING_DESCRIPTION, data)
@@ -395,6 +416,11 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
     if state == STATE_WAITING_DESCRIPTION:
         if not text:
             resp.message("❌ No entendí la descripción. Escríbela nuevamente.")
+            render_state_prompt(resp, STATE_WAITING_DESCRIPTION, data)
+            return xml(resp)
+
+        if len(text) > DESCRIPTION_MAX_LEN:
+            resp.message(f"Descripción demasiado larga. Máximo {DESCRIPTION_MAX_LEN} caracteres.")
             render_state_prompt(resp, STATE_WAITING_DESCRIPTION, data)
             return xml(resp)
 
