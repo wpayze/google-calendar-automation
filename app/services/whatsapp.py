@@ -31,30 +31,29 @@ _reservation_service: Optional[ReservationService] = None
 
 CALCULATOR_URL = os.getenv(
     "BUDGET_CALCULATOR_URL",
-    "Formulario de presupuesto no disponible por el momento.",
+    "⚠️ El formulario de presupuesto no está disponible por el momento.",
 )
 
 MENU_TEXT = (
     "👋 ¡Hola! Soy el asistente virtual de *EGM Grupo*.\n\n"
-    "Puedo ayudarte con lo siguiente:\n"
-    "🛠️ Agendar una visita para tu reforma\n"
-    "ℹ️ Conocer más sobre nuestros servicios\n"
-    "🧮 Calcular un presupuesto orientativo online\n\n"
-    "Responde con:\n"
-    "1️⃣ Agendar cita\n"
-    "2️⃣ Información\n"
-    "3️⃣ Calculadora de presupuesto"
+    "¿En qué puedo ayudarte hoy?\n\n"
+    "1️⃣ 🛠️ Agendar una visita para tu reforma\n"
+    "2️⃣ ℹ️ Información sobre nuestros servicios\n"
+    "3️⃣ 🧮 Calculadora de presupuesto online\n\n"
+    "Responde con el número de tu opción."
 )
 
 INFO_TEXT = (
     "🏗️ *EGM Grupo*\n"
     "Reformas y diseño en Valencia.\n\n"
-    "✔️ Presupuestos en 48h\n"
+    "✨ Lo que ofrecemos:\n"
+    "✔️ Presupuesto en 48h\n"
     "✔️ Proyectos a medida\n"
-    "✔️ Acompañamiento de principio a fin\n"
+    "✔️ Acompañamiento de principio a fin\n\n"
+    "Si quieres, puedo ayudarte a agendar una visita 📅"
 )
 
-INVALID_OPTION_TEXT = "❌ Opción no válida. Responde con uno de los números indicados."
+INVALID_OPTION_TEXT = "❌ Opción no válida. Responde con uno de los números del menú."
 
 VALID_CHOICES: Dict[str, Optional[Set[str]]] = {
     STATE_IDLE: {"1", "2", "3"},
@@ -92,7 +91,7 @@ def _get_reservation_service() -> Optional[ReservationService]:
 async def _fetch_slots(from_date: Optional[date]) -> List[str]:
     service = _get_reservation_service()
     if service is None:
-        raise ValueError("Lo siento, el servicio de citas no está disponible en este momento.")
+        raise ValueError("😕 Ahora mismo el servicio de citas no está disponible. Intenta más tarde.")
 
     args: Dict[str, Any] = {}
     if from_date:
@@ -113,7 +112,7 @@ async def _fetch_slots(from_date: Optional[date]) -> List[str]:
             continue
 
     if not slots:
-        raise ValueError("No hay horarios disponibles en este momento.")
+        raise ValueError("😔 No hay horarios disponibles en este momento. Prueba más tarde.")
 
     return slots[:3]
 
@@ -149,13 +148,13 @@ def build_menu(resp: MessagingResponse) -> None:
 def build_slot_menu(resp: MessagingResponse, slots: List[str]) -> None:
     formatted = [_format_slot_pretty(s) for s in slots]
     resp.message(
-        "📅 *Fechas disponibles*\n\n"
+        "📅 *Horarios disponibles*\n\n"
         "Elige el horario que mejor te venga:\n\n"
         f"1️⃣ {formatted[0]}\n"
         f"2️⃣ {formatted[1]}\n"
         f"3️⃣ {formatted[2]}\n\n"
-        "4️⃣ 📆 Otra fecha\n"
-        "5️⃣ 🔙 Menú principal\n\n"
+        "4️⃣ 📆 Elegir otra fecha\n"
+        "5️⃣ 🔙 Volver al menú principal\n\n"
         "Responde con el número de tu elección."
     )
 
@@ -188,15 +187,15 @@ def render_state_prompt(resp: MessagingResponse, state: str, data: Dict[str, Any
     if state == STATE_WAITING_CONFIRMATION:
         resp.message(
             "✅ *Revisa los datos de tu cita:*\n\n"
-            f"📅 {_format_slot_pretty(str(data.get('chosen_slot', '')))}\n"
-            f"👤 {str(data.get('name', ''))}\n"
-            f"📧 {str(data.get('email', ''))}\n"
-            f"📍 {str(data.get('address', ''))}\n"
-            f"🛠️ {str(data.get('description', ''))}\n\n"
-            "¿Todo es correcto?\n\n"
-            "1️⃣ Confirmar cita\n"
-            "2️⃣ Corregir datos\n"
-            "3️⃣ Cancelar cita"
+            f"📅 *Fecha:* {_format_slot_pretty(str(data.get('chosen_slot', '')))}\n"
+            f"👤 *Nombre:* {str(data.get('name', ''))}\n"
+            f"📧 *Email:* {str(data.get('email', ''))}\n"
+            f"📍 *Dirección:* {str(data.get('address', ''))}\n"
+            f"🛠️ *Detalles:* {str(data.get('description', ''))}\n\n"
+            "¿Todo está correcto?\n\n"
+            "1️⃣ ✅ Confirmar cita\n"
+            "2️⃣ ✏️ Corregir datos\n"
+            "3️⃣ 🚫 Cancelar"
         )
         return
 
@@ -209,15 +208,15 @@ def render_state_prompt(resp: MessagingResponse, state: str, data: Dict[str, Any
         return
 
     if state == STATE_WAITING_NAME:
-        resp.message("¿Cuál es tu *nombre*?")
+        resp.message("👤 ¿Cuál es tu *nombre*?")
         return
 
     if state == STATE_WAITING_EMAIL:
-        resp.message("¿Cuál es tu *correo electrónico*?")
+        resp.message("📧 ¿Cuál es tu *correo electrónico*? (Ej: nombre@correo.com)")
         return
 
     if state == STATE_WAITING_ADDRESS:
-        resp.message("📍 Indícanos la *dirección de la vivienda*:")
+        resp.message("📍 Indícanos la *dirección de la vivienda* (calle y número):")
         return
 
     if state == STATE_WAITING_DESCRIPTION:
@@ -262,6 +261,7 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
     # IDLE (solo números)
     if state == STATE_IDLE:
         if text not in {"1", "2", "3"}:
+            resp.message(INVALID_OPTION_TEXT)
             build_menu(resp)
             return xml(resp)
 
@@ -269,7 +269,7 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
             try:
                 slots = await _fetch_slots(datetime.now().date() + timedelta(days=1))
             except Exception as exc:
-                resp.message(str(exc) or "Lo siento, el servicio de citas no está disponible en este momento. Intenta más tarde.")
+                resp.message(str(exc) or "😕 Ahora mismo el servicio de citas no está disponible. Intenta más tarde.")
                 reset_state(phone, STATE_IDLE)
                 build_menu(resp)
                 return xml(resp)
@@ -284,7 +284,8 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
 
         if text == "3":
             resp.message(
-                "🧮 Calcula un presupuesto orientativo desde casa:\n\n"
+                "🧮 *Calculadora de presupuesto*\n\n"
+                "Calcula un presupuesto orientativo desde casa:\n"
                 f"👉 {CALCULATOR_URL}"
             )
             reset_state(phone, STATE_IDLE)
@@ -302,7 +303,7 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
 
         if choice in {"1", "2", "3"}:
             if len(slots) < 3:
-                resp.message("❌ No hay horarios disponibles. Volviendo al menú.")
+                resp.message("😔 No hay horarios disponibles. Volviendo al menú principal.")
                 reset_state(phone, STATE_IDLE)
                 build_menu(resp)
                 return xml(resp)
@@ -310,9 +311,9 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
             chosen = slots[int(choice) - 1]
             save_state(phone, STATE_WAITING_NAME, {"chosen_slot": chosen})
             resp.message(
-                f"👍 Has elegido:\n"
+                "✅ Perfecto, has elegido:\n"
                 f"📅 {_format_slot_pretty(chosen)}\n\n"
-                "¿Cuál es tu *nombre*?"
+                "👤 ¿Cuál es tu *nombre*?"
             )
             return xml(resp)
 
@@ -335,18 +336,18 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
         parsed = parse_ddmmyyyy(text)
         if parsed:
             if parsed < datetime.now().date():
-                resp.message("❌ La fecha debe ser hoy o futura. Intenta nuevamente.")
+                resp.message("❌ La fecha debe ser *hoy o futura*. Inténtalo de nuevo.")
                 render_state_prompt(resp, STATE_DATE_FREEFORM, {})
                 return xml(resp)
             if parsed > (datetime.now().date() + timedelta(days=90)):
-                resp.message("❌ Solo puedo agendar hasta 3 meses desde hoy. Intenta con otra fecha.")
+                resp.message("❌ Solo puedo agendar hasta *3 meses* desde hoy. Prueba con otra fecha.")
                 render_state_prompt(resp, STATE_DATE_FREEFORM, {})
                 return xml(resp)
 
             try:
                 slots = await _fetch_slots(parsed)
             except Exception as exc:
-                resp.message(str(exc) or "Lo siento, el servicio de citas no está disponible en este momento. Intenta más tarde.")
+                resp.message(str(exc) or "😕 Ahora mismo el servicio de citas no está disponible. Intenta más tarde.")
                 reset_state(phone, STATE_IDLE)
                 build_menu(resp)
                 return xml(resp)
@@ -355,7 +356,7 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
             return xml(resp)
 
         resp.message(
-            "❌ Formato inválido.\n"
+            "❌ Formato incorrecto.\n"
             "Usa *DD-MM-YYYY*\n"
             "Ejemplo: 15-01-2026"
         )
@@ -365,12 +366,12 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
     # WAITING_NAME (texto libre)
     if state == STATE_WAITING_NAME:
         if not text:
-            resp.message("❌ No entendí el nombre. Escríbelo nuevamente.")
+            resp.message("❌ No lo he entendido. ¿Puedes escribir tu nombre de nuevo?")
             render_state_prompt(resp, STATE_WAITING_NAME, data)
             return xml(resp)
 
         if not (NAME_MIN_LEN <= len(text) <= NAME_MAX_LEN):
-            resp.message(f"Nombre debe tener entre {NAME_MIN_LEN} y {NAME_MAX_LEN} caracteres.")
+            resp.message(f"❌ El nombre debe tener entre {NAME_MIN_LEN} y {NAME_MAX_LEN} caracteres.")
             render_state_prompt(resp, STATE_WAITING_NAME, data)
             return xml(resp)
 
@@ -382,12 +383,12 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
     # WAITING_EMAIL (texto libre)
     if state == STATE_WAITING_EMAIL:
         if not text:
-            resp.message("❌ No entendí el correo. Escríbelo nuevamente.")
+            resp.message("❌ No lo he entendido. ¿Puedes escribir tu correo de nuevo?")
             render_state_prompt(resp, STATE_WAITING_EMAIL, data)
             return xml(resp)
 
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", text):
-            resp.message("Correo no válido. Intenta nuevamente.")
+            resp.message("❌ Ese correo no parece válido. Intenta de nuevo (ej: nombre@correo.com).")
             render_state_prompt(resp, STATE_WAITING_EMAIL, data)
             return xml(resp)
 
@@ -399,12 +400,12 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
     # WAITING_ADDRESS (texto libre)
     if state == STATE_WAITING_ADDRESS:
         if not text:
-            resp.message("❌ No entendí la dirección. Escríbela nuevamente.")
+            resp.message("❌ No lo he entendido. ¿Puedes escribir la dirección de nuevo?")
             render_state_prompt(resp, STATE_WAITING_ADDRESS, data)
             return xml(resp)
 
         if len(text) > ADDRESS_MAX_LEN:
-            resp.message(f"Dirección demasiado larga. Máximo {ADDRESS_MAX_LEN} caracteres.")
+            resp.message(f"❌ Dirección demasiado larga. Máximo {ADDRESS_MAX_LEN} caracteres.")
             render_state_prompt(resp, STATE_WAITING_ADDRESS, data)
             return xml(resp)
 
@@ -416,12 +417,12 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
     # WAITING_DESCRIPTION (texto libre)
     if state == STATE_WAITING_DESCRIPTION:
         if not text:
-            resp.message("❌ No entendí la descripción. Escríbela nuevamente.")
+            resp.message("❌ No lo he entendido. ¿Puedes describirlo de nuevo, por favor?")
             render_state_prompt(resp, STATE_WAITING_DESCRIPTION, data)
             return xml(resp)
 
         if len(text) > DESCRIPTION_MAX_LEN:
-            resp.message(f"Descripción demasiado larga. Máximo {DESCRIPTION_MAX_LEN} caracteres.")
+            resp.message(f"❌ Descripción demasiado larga. Máximo {DESCRIPTION_MAX_LEN} caracteres.")
             render_state_prompt(resp, STATE_WAITING_DESCRIPTION, data)
             return xml(resp)
 
@@ -436,14 +437,14 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
         if data.get("info_mode") is True:
             if text not in {"1", "2"}:
                 resp.message(INVALID_OPTION_TEXT)
-                resp.message(INFO_TEXT + "\n\n" + "Responde:\n1️⃣ Agendar cita\n2️⃣ Menú principal")
+                resp.message(INFO_TEXT + "\n\n" + "Responde:\n1️⃣ 🛠️ Agendar cita\n2️⃣ 🔙 Menú principal")
                 return xml(resp)
 
             if text == "1":
                 try:
                     slots = await _fetch_slots(datetime.now().date() + timedelta(days=1))
                 except Exception as exc:
-                    resp.message(str(exc) or "Lo siento, el servicio de citas no está disponible en este momento. Intenta más tarde.")
+                    resp.message(str(exc) or "😕 Ahora mismo el servicio de citas no está disponible. Intenta más tarde.")
                     reset_state(phone, STATE_IDLE)
                     build_menu(resp)
                     return xml(resp)
@@ -465,7 +466,7 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
             service = _get_reservation_service()
             if parsed_slot is None or service is None:
                 reset_state(phone, STATE_IDLE)
-                resp.message("No pude crear la reserva. Intenta de nuevo más tarde.")
+                resp.message("😕 No pude crear la reserva. Intenta de nuevo más tarde.")
                 build_menu(resp)
                 return xml(resp)
 
@@ -489,23 +490,23 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
             reset_state(phone, STATE_IDLE)
             if created:
                 resp.message(
-                    "🎉 *¡Cita confirmada!* 🎉\n\n"
-                    f"{message}"
-                    "Gracias por confiar en *EGM Grupo*.\n"
+                    "🎉 *¡Cita confirmada!* 🎉\n"
+                    f"{message}\n\n"
+                    "Gracias por confiar en *EGM Grupo* 🙌\n"
                     "Nos pondremos en contacto contigo muy pronto 😊"
                 )
             else:
-                resp.message(f"No pude crear la reserva: {message}")
+                resp.message(f"😕 No pude crear la reserva: {message}")
                 build_menu(resp)
             return xml(resp)
 
         if choice == "2":
             save_state(phone, STATE_WAITING_NAME, {"chosen_slot": data.get("chosen_slot", "")})
-            resp.message("🔁 Vamos a corregir los datos.\n¿Cuál es tu nombre?")
+            resp.message("🔁 Perfecto, vamos a corregir los datos.\n\n👤 ¿Cuál es tu *nombre*?")
             return xml(resp)
         if choice == "3":
             reset_state(phone, STATE_IDLE)
-            resp.message("Cita cancelada. Volviendo al menu principal.")
+            resp.message("🚫 Cita cancelada. Te devuelvo al menú principal.")
             build_menu(resp)
             return xml(resp)
 
