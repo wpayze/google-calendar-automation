@@ -118,6 +118,17 @@ async def _fetch_slots(from_date: Optional[date]) -> List[str]:
     return slots[:3]
 
 
+def _parse_slot_ddmmyyyy_hhmm(slot: str) -> Optional[tuple[str, str]]:
+    """
+    Convierte 'DD-MM-YYYY HH:MM' en (date_iso, time_hhmm).
+    """
+    try:
+        dt = datetime.strptime(slot, "%d-%m-%Y %H:%M")
+    except ValueError:
+        return None
+    return dt.date().isoformat(), dt.strftime("%H:%M")
+
+
 def _format_slot_pretty(slot: str) -> str:
     try:
         dt = datetime.strptime(slot, "%d-%m-%Y %H:%M")
@@ -449,12 +460,43 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
             return xml(resp)
 
         if choice == "1":
+            slot_raw = data.get("chosen_slot", "")
+            parsed_slot = _parse_slot_ddmmyyyy_hhmm(str(slot_raw))
+            service = _get_reservation_service()
+            if parsed_slot is None or service is None:
+                reset_state(phone, STATE_IDLE)
+                resp.message("No pude crear la reserva. Intenta de nuevo más tarde.")
+                build_menu(resp)
+                return xml(resp)
+
+            date_str, time_str = parsed_slot
+            try:
+                result = await service.create_reservation(
+                    {
+                        "date": date_str,
+                        "time": time_str,
+                        "name": data.get("name", "Invitado"),
+                        "customer_number": phone or "No proporcionado",
+                        "reforma": data.get("description", "No especificada"),
+                    }
+                )
+                created = result.get("created", False)
+                message = result.get("message") or "Reserva registrada."
+            except Exception as exc:
+                created = False
+                message = str(exc) or "Error al crear la reserva."
+
             reset_state(phone, STATE_IDLE)
-            resp.message(
-                "🎉 *¡Cita confirmada!* 🎉\n\n"
-                "Gracias por confiar en *EGM Grupo*.\n"
-                "Nos pondremos en contacto contigo muy pronto 😊"
-            )
+            if created:
+                resp.message(
+                    "🎉 *¡Cita confirmada!* 🎉\n\n"
+                    f"{message}"
+                    "Gracias por confiar en *EGM Grupo*.\n"
+                    "Nos pondremos en contacto contigo muy pronto 😊"
+                )
+            else:
+                resp.message(f"No pude crear la reserva: {message}")
+                build_menu(resp)
             return xml(resp)
 
         if choice == "2":
