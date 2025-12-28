@@ -53,4 +53,4 @@ async def twilio_whatsapp_webhook(
     from_number: str = Form(default=None, alias="From"),
     body: str = Form(default=None, alias="Body"),
 ) -> Response:
-    return handle_whatsapp_message(from_number, body)
+    return await handle_whatsapp_message(from_number, body)

@@ -12,6 +12,7 @@ from app.services.helpers.whatsapp_db import (
     reset_state,
     save_state,
 )
+from app.services.reservation_service import ReservationService
 
 STATE_IDLE = "IDLE"
 STATE_DATE_PICK = "DATE_PICK"
@@ -26,6 +27,7 @@ NAME_MIN_LEN = 3
 NAME_MAX_LEN = 60
 ADDRESS_MAX_LEN = 120
 DESCRIPTION_MAX_LEN = 300
+_reservation_service: Optional[ReservationService] = None
 
 CALCULATOR_URL = os.getenv(
     "BUDGET_CALCULATOR_URL",
@@ -74,6 +76,46 @@ def _slot_options(base_day: date) -> List[str]:
         dt = datetime.combine(base_day + timedelta(days=idx), t)
         slots.append(dt.strftime("%d-%m-%Y %H:%M"))
     return slots
+
+
+def _get_reservation_service() -> Optional[ReservationService]:
+    global _reservation_service
+    if _reservation_service is not None:
+        return _reservation_service
+    try:
+        _reservation_service = ReservationService()
+    except Exception:
+        _reservation_service = None
+    return _reservation_service
+
+
+async def _fetch_slots(from_date: Optional[date]) -> List[str]:
+    service = _get_reservation_service()
+    if service is None:
+        raise ValueError("Lo siento, el servicio de citas no está disponible en este momento.")
+
+    args: Dict[str, Any] = {}
+    if from_date:
+        args["desde"] = from_date.isoformat()
+
+    result = await service.list_next_slots(args)
+
+    slots_raw = result.get("available_slots") or []
+    slots: List[str] = []
+    for item in slots_raw:
+        start_iso = item.get("start")
+        if not start_iso:
+            continue
+        try:
+            dt = datetime.fromisoformat(start_iso)
+            slots.append(dt.strftime("%d-%m-%Y %H:%M"))
+        except Exception:
+            continue
+
+    if not slots:
+        raise ValueError("No hay horarios disponibles en este momento.")
+
+    return slots[:3]
 
 
 def _format_slot_pretty(slot: str) -> str:
@@ -194,7 +236,7 @@ def require_choice(resp: MessagingResponse, state: str, text: str, data: Dict[st
 
 
 # -------------------- Main handler --------------------
-def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> Response:
+async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> Response:
     init_db()
 
     phone = (from_number or "").strip()
@@ -213,7 +255,13 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
             return xml(resp)
 
         if text == "1":
-            slots = _slot_options(datetime.now().date() + timedelta(days=1))
+            try:
+                slots = await _fetch_slots(datetime.now().date() + timedelta(days=1))
+            except Exception as exc:
+                resp.message(str(exc) or "Lo siento, el servicio de citas no está disponible en este momento. Intenta más tarde.")
+                reset_state(phone, STATE_IDLE)
+                build_menu(resp)
+                return xml(resp)
             save_state(phone, STATE_DATE_PICK, {"slots": slots})
             build_slot_menu(resp, slots)
             return xml(resp)
@@ -275,7 +323,22 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
     if state == STATE_DATE_FREEFORM:
         parsed = parse_ddmmyyyy(text)
         if parsed:
-            slots = _slot_options(parsed)
+            if parsed < datetime.now().date():
+                resp.message("❌ La fecha debe ser hoy o futura. Intenta nuevamente.")
+                render_state_prompt(resp, STATE_DATE_FREEFORM, {})
+                return xml(resp)
+            if parsed > (datetime.now().date() + timedelta(days=90)):
+                resp.message("❌ Solo puedo agendar hasta 3 meses desde hoy. Intenta con otra fecha.")
+                render_state_prompt(resp, STATE_DATE_FREEFORM, {})
+                return xml(resp)
+
+            try:
+                slots = await _fetch_slots(parsed)
+            except Exception as exc:
+                resp.message(str(exc) or "Lo siento, el servicio de citas no está disponible en este momento. Intenta más tarde.")
+                reset_state(phone, STATE_IDLE)
+                build_menu(resp)
+                return xml(resp)
             save_state(phone, STATE_DATE_PICK, {"slots": slots})
             build_slot_menu(resp, slots)
             return xml(resp)
@@ -366,7 +429,13 @@ def handle_whatsapp_message(from_number: Optional[str], body: Optional[str]) -> 
                 return xml(resp)
 
             if text == "1":
-                slots = _slot_options(datetime.now().date() + timedelta(days=1))
+                try:
+                    slots = await _fetch_slots(datetime.now().date() + timedelta(days=1))
+                except Exception as exc:
+                    resp.message(str(exc) or "Lo siento, el servicio de citas no está disponible en este momento. Intenta más tarde.")
+                    reset_state(phone, STATE_IDLE)
+                    build_menu(resp)
+                    return xml(resp)
                 save_state(phone, STATE_DATE_PICK, {"slots": slots})
                 build_slot_menu(resp, slots)
                 return xml(resp)
