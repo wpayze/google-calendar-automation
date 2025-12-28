@@ -37,10 +37,10 @@ CALCULATOR_URL = os.getenv(
 MENU_TEXT = (
     "👋 ¡Hola! Soy el asistente virtual de *EGM Grupo*.\n\n"
     "¿En qué puedo ayudarte hoy?\n\n"
-    "1️⃣ 🛠️ Agendar una visita para tu reforma\n"
-    "2️⃣ ℹ️ Información sobre nuestros servicios\n"
-    "3️⃣ 🧮 Calculadora de presupuesto online\n\n"
-    "Responde con el número de tu opción."
+    "1️⃣ Agendar una visita para tu reforma\n"
+    "2️⃣ Información sobre nuestros servicios\n"
+    "3️⃣ Calculadora de presupuesto online\n\n"
+    "Responde con 1, 2 o 3."
 )
 
 INFO_TEXT = (
@@ -223,9 +223,8 @@ def render_state_prompt(resp: MessagingResponse, state: str, data: Dict[str, Any
         resp.message(
             "📝 Cuéntanos brevemente qué necesitas.\n\n"
             "Ejemplos:\n"
-            "• Reforma integral\n"
-            "• Reforma de cocina\n"
-            "• Reforma de baño"
+            "• Quiero una reforma integral de mi vivienda\n"
+            "• Necesito reformar la cocina y el baño de mi piso\n"
         )
         return
 
@@ -261,7 +260,11 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
     # IDLE (solo números)
     if state == STATE_IDLE:
         if text not in {"1", "2", "3"}:
-            resp.message(INVALID_OPTION_TEXT)
+            if data.get("menu_shown"):
+                resp.message(INVALID_OPTION_TEXT)
+            else:
+                data["menu_shown"] = True
+                save_state(phone, STATE_IDLE, data)
             build_menu(resp)
             return xml(resp)
 
@@ -286,7 +289,8 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
             resp.message(
                 "🧮 *Calculadora de presupuesto*\n\n"
                 "Calcula un presupuesto orientativo desde casa:\n"
-                f"👉 {CALCULATOR_URL}"
+                f"👉 {CALCULATOR_URL}\n\n"
+                "Respóndeme cualquier texto para volver al menú principal."
             )
             reset_state(phone, STATE_IDLE)
             return xml(resp)
@@ -388,7 +392,7 @@ async def handle_whatsapp_message(from_number: Optional[str], body: Optional[str
             return xml(resp)
 
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", text):
-            resp.message("❌ Ese correo no parece válido. Intenta de nuevo (ej: nombre@correo.com).")
+            resp.message("❌ Ese correo no parece válido. Intenta de nuevo.")
             render_state_prompt(resp, STATE_WAITING_EMAIL, data)
             return xml(resp)
 
