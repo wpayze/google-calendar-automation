@@ -20,6 +20,7 @@ def extract_tool_payload(payload: Dict[str, Any]) -> CleanPayload:
     """
     Adapta payloads en formato simple (tool/arguments) y formato VAPI con message.toolCallList.
     """
+    print("raw_payload:", payload)
     if not isinstance(payload, dict):
         raise ValueError("Payload must be a JSON object.")
 
