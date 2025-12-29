@@ -26,7 +26,11 @@ def _align_to_slot(dt: datetime, slot_minutes: int) -> datetime:
         return dt
     next_minutes = minute_total - remainder + slot_minutes
     hours, minutes = divmod(next_minutes, 60)
-    return dt.replace(hour=hours % 24, minute=minutes, second=0, microsecond=0)
+    day_increment = hours // 24
+    aligned = dt.replace(hour=hours % 24, minute=minutes, second=0, microsecond=0)
+    if day_increment:
+        aligned = aligned + timedelta(days=day_increment)
+    return aligned
 
 
 def _slot_speech(dt: datetime, tz_str: str) -> str:
@@ -303,10 +307,12 @@ class ReservationService:
         else:
             search_date = now.date()
 
-        if search_date < now.date():
-            search_date = now.date() + timedelta(days=7)
+        # If the requested start date is today or in the past, ignore it and use today.
+        if search_date <= now.date():
+            search_date = now.date()
+            desde_str = None
 
-        normalized_desde = search_date.isoformat()
+        normalized_desde = search_date.isoformat() if desde_str else None
 
         slots: List[Dict[str, Any]] = []
         day_offset = 0
