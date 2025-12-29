@@ -29,6 +29,74 @@ def _align_to_slot(dt: datetime, slot_minutes: int) -> datetime:
     return dt.replace(hour=hours % 24, minute=minutes, second=0, microsecond=0)
 
 
+def _slot_speech(dt: datetime, tz_str: str) -> str:
+    """Human-friendly Spanish phrase for a slot start."""
+    try:
+        target_tz = ZoneInfo(tz_str)
+    except Exception:
+        target_tz = dt.tzinfo or timezone.utc
+
+    localized = dt.astimezone(target_tz) if dt.tzinfo else dt.replace(tzinfo=target_tz)
+
+    month_names = [
+        "enero",
+        "febrero",
+        "marzo",
+        "abril",
+        "mayo",
+        "junio",
+        "julio",
+        "agosto",
+        "septiembre",
+        "octubre",
+        "noviembre",
+        "diciembre",
+    ]
+    hour_words = {
+        1: "una",
+        2: "dos",
+        3: "tres",
+        4: "cuatro",
+        5: "cinco",
+        6: "seis",
+        7: "siete",
+        8: "ocho",
+        9: "nueve",
+        10: "diez",
+        11: "once",
+        12: "doce",
+    }
+
+    hour_24 = localized.hour
+    minute = localized.minute
+    hour_12 = hour_24 % 12 or 12
+
+    if hour_24 < 6:
+        period = "de la madrugada"
+    elif hour_24 < 12:
+        period = "de la mañana"
+    elif hour_24 < 20:
+        period = "de la tarde"
+    else:
+        period = "de la noche"
+
+    if minute == 0:
+        time_phrase = hour_words.get(hour_12, f"{hour_12}")
+    elif minute == 30:
+        time_phrase = f"{hour_words.get(hour_12, hour_12)} y media"
+    elif minute == 15:
+        time_phrase = f"{hour_words.get(hour_12, hour_12)} y cuarto"
+    elif minute == 45:
+        next_hour_12 = (hour_12 % 12) + 1
+        next_hour_word = hour_words.get(next_hour_12, f"{next_hour_12}")
+        time_phrase = f"{next_hour_word} menos cuarto"
+    else:
+        time_phrase = f"{hour_12:02d}:{minute:02d}"
+
+    preposition = "a la" if hour_12 == 1 else "a las"
+    return f"{localized.day} de {month_names[localized.month - 1]} {preposition} {time_phrase} {period}"
+
+
 def _intervals_for_date(current_date: datetime, block: str) -> List[Tuple[datetime, datetime]]:
     """Return working intervals for a date, filtered by block if provided."""
     tzinfo = current_date.tzinfo
@@ -281,15 +349,15 @@ class ReservationService:
                     if not overlap:
                         slots.append(
                             {
-                                "start": candidate_start.isoformat(),
-                                "end": candidate_end.isoformat(),
-                                "timeZone": tz_str,
+                                "slot_start_iso": candidate_start.isoformat(),
+                                "slot_end_iso": candidate_end.isoformat(),
+                                "slot_speech": _slot_speech(candidate_start, tz_str),
                             }
                         )
 
                     cursor = candidate_end
 
-        slots_sorted = sorted(slots, key=lambda s: s["start"])
+        slots_sorted = sorted(slots, key=lambda s: s["slot_start_iso"])
         top_slots = slots_sorted[:top_n]
         suggested = top_slots[0] if top_slots else None
 
