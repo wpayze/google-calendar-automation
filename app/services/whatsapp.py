@@ -102,7 +102,7 @@ async def _fetch_slots(from_date: Optional[date]) -> List[str]:
     slots_raw = result.get("available_slots") or []
     slots: List[str] = []
     for item in slots_raw:
-        start_iso = item.get("start")
+        start_iso = item.get("slot_start_iso")
         if not start_iso:
             continue
         try:

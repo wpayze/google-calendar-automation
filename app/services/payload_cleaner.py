@@ -68,6 +68,19 @@ def extract_tool_payload(payload: Dict[str, Any]) -> CleanPayload:
     if isinstance(customer, dict) and customer.get("number") and "customer_number" not in arguments:
         arguments["customer_number"] = customer.get("number")
 
+    # Use chat/session id as fallback customer identifier to scope suggestions per user.
+    chat_id = None
+    try:
+        chat_id = payload.get("message", {}).get("server", {}).get("headers", {}).get("X-Chat-Id")
+    except Exception:
+        chat_id = None
+    if not chat_id:
+        chat_id = payload.get("chat", {}).get("id")
+    if chat_id and "chat_id" not in arguments:
+        arguments["chat_id"] = chat_id
+    if chat_id and "customer_number" not in arguments:
+        arguments["customer_number"] = chat_id
+
     if tool is None:
         raise ValueError("Payload missing required 'tool' key.")
 
