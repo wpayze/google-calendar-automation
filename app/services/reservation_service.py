@@ -9,12 +9,15 @@ from googleapiclient.errors import HttpError
 
 from app.services.payload_cleaner import CleanPayload
 from app.services.business_hours import BUSINESS_HOURS, MORNING_END
+from app.enums import MONTH_NAMES, HOUR_WORDS
 
 CALENDAR_SCOPES = ["https://www.googleapis.com/auth/calendar"]
 DEFAULT_TOP_N = 5
 DEFAULT_DURATION_MINUTES = 60
 DEFAULT_TIMEZONE = "Europe/Madrid"
 MAX_SLOT_SEARCH_DAYS = 14
+SUGGESTION_MEMORY_TTL = timedelta(minutes=10)
+_SUGGESTION_MEMORY: Dict[str, List[Tuple[str, datetime]]] = {}
 
 
 def _align_to_slot(dt: datetime, slot_minutes: int) -> datetime:
@@ -33,44 +36,17 @@ def _align_to_slot(dt: datetime, slot_minutes: int) -> datetime:
     return aligned
 
 
-def _slot_speech(dt: datetime, tz_str: str) -> str:
-    """Human-friendly Spanish phrase for a slot start."""
+def _localize(dt: datetime, tz_str: str) -> datetime:
+    """Return datetime in target tz, falling back gracefully."""
     try:
         target_tz = ZoneInfo(tz_str)
     except Exception:
         target_tz = dt.tzinfo or timezone.utc
+    return dt.astimezone(target_tz) if dt.tzinfo else dt.replace(tzinfo=target_tz)
 
-    localized = dt.astimezone(target_tz) if dt.tzinfo else dt.replace(tzinfo=target_tz)
 
-    month_names = [
-        "enero",
-        "febrero",
-        "marzo",
-        "abril",
-        "mayo",
-        "junio",
-        "julio",
-        "agosto",
-        "septiembre",
-        "octubre",
-        "noviembre",
-        "diciembre",
-    ]
-    hour_words = {
-        1: "una",
-        2: "dos",
-        3: "tres",
-        4: "cuatro",
-        5: "cinco",
-        6: "seis",
-        7: "siete",
-        8: "ocho",
-        9: "nueve",
-        10: "diez",
-        11: "once",
-        12: "doce",
-    }
-
+def _time_phrase(localized: datetime) -> Tuple[str, str, int, int]:
+    """Return (time_phrase, period, hour_12, minute) for a localized datetime."""
     hour_24 = localized.hour
     minute = localized.minute
     hour_12 = hour_24 % 12 or 12
@@ -85,20 +61,40 @@ def _slot_speech(dt: datetime, tz_str: str) -> str:
         period = "de la noche"
 
     if minute == 0:
-        time_phrase = hour_words.get(hour_12, f"{hour_12}")
+        time_phrase = HOUR_WORDS.get(hour_12, f"{hour_12}")
     elif minute == 30:
-        time_phrase = f"{hour_words.get(hour_12, hour_12)} y media"
+        time_phrase = f"{HOUR_WORDS.get(hour_12, hour_12)} y media"
     elif minute == 15:
-        time_phrase = f"{hour_words.get(hour_12, hour_12)} y cuarto"
+        time_phrase = f"{HOUR_WORDS.get(hour_12, hour_12)} y cuarto"
     elif minute == 45:
         next_hour_12 = (hour_12 % 12) + 1
-        next_hour_word = hour_words.get(next_hour_12, f"{next_hour_12}")
+        next_hour_word = HOUR_WORDS.get(next_hour_12, f"{next_hour_12}")
         time_phrase = f"{next_hour_word} menos cuarto"
     else:
         time_phrase = f"{hour_12:02d}:{minute:02d}"
 
+    return time_phrase, period, hour_12, minute
+
+
+def _slot_speech(dt: datetime, tz_str: str) -> str:
+    """Human-friendly Spanish phrase for a slot start."""
+    localized = _localize(dt, tz_str)
+    time_phrase, period, hour_12, _ = _time_phrase(localized)
     preposition = "a la" if hour_12 == 1 else "a las"
-    return f"{localized.day} de {month_names[localized.month - 1]} {preposition} {time_phrase} {period}"
+    return f"{localized.day} de {MONTH_NAMES[localized.month - 1]} {preposition} {time_phrase} {period}"
+
+
+def _day_label(dt: datetime, tz_str: str) -> str:
+    """Return '13 de enero' for the given datetime in tz."""
+    localized = _localize(dt, tz_str)
+    return f"{localized.day} de {MONTH_NAMES[localized.month - 1]}"
+
+
+def _time_only_speech(dt: datetime, tz_str: str) -> str:
+    """Time phrase without the date (e.g., 'tres de la tarde')."""
+    localized = _localize(dt, tz_str)
+    time_phrase, period, _, _ = _time_phrase(localized)
+    return f"{time_phrase} {period}"
 
 
 def _intervals_for_date(current_date: datetime, block: str) -> List[Tuple[datetime, datetime]]:
@@ -213,8 +209,9 @@ class ReservationService:
         if not inside:
             raise ValueError("Outside business hours.")
 
+
     async def check_availability(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Consulta disponibilidad para un slot específico."""
+        """Consulta disponibilidad para un slot específico y devuelve huecos del dia."""
         self._ensure_business_hours(
             arguments.get("date"),
             arguments.get("time"),
@@ -222,21 +219,73 @@ class ReservationService:
         args_with_tz = {**arguments, "timezone": DEFAULT_TIMEZONE}
         start_iso, end_iso, tz_str = self._extract_time_window(args_with_tz)
 
+        tzinfo = ZoneInfo(tz_str)
+        day_dt = datetime.fromisoformat(f"{arguments.get('date')}T00:00:00").replace(tzinfo=tzinfo)
+        intervals = _intervals_for_date(day_dt, block="")
+        if not intervals:
+            return {
+                "available": False,
+                "busy": [],
+                "available_slots": [],
+                "slots_in_day": False,
+                "day": _day_label(day_dt, tz_str),
+            }
+
+        day_start = intervals[0][0]
+        day_end = intervals[-1][1]
+
         body = {
-            "timeMin": start_iso,
-            "timeMax": end_iso,
+            "timeMin": day_start.isoformat(),
+            "timeMax": day_end.isoformat(),
             "items": [{"id": self.calendar_id}],
             "timeZone": tz_str,
         }
         response = self.service.freebusy().query(body=body).execute()
-        busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get(
-            "busy", []
-        )
+        busy_slots = response.get("calendars", {}).get(self.calendar_id, {}).get("busy", [])
 
+        requested_start = datetime.fromisoformat(start_iso)
+        requested_end = datetime.fromisoformat(end_iso)
+        requested_available = True
+        for busy in busy_slots:
+            busy_start = datetime.fromisoformat(busy["start"])
+            busy_end = datetime.fromisoformat(busy["end"])
+            if requested_start < busy_end and requested_end > busy_start:
+                requested_available = False
+                break
+
+        slots_for_day: List[Dict[str, Any]] = []
+        for start_dt, end_dt in intervals:
+            cursor = _align_to_slot(start_dt, DEFAULT_DURATION_MINUTES)
+            while cursor + timedelta(minutes=DEFAULT_DURATION_MINUTES) <= end_dt:
+                candidate_start = cursor
+                candidate_end = cursor + timedelta(minutes=DEFAULT_DURATION_MINUTES)
+
+                overlap = False
+                for busy in busy_slots:
+                    busy_start = datetime.fromisoformat(busy["start"])
+                    busy_end = datetime.fromisoformat(busy["end"])
+                    if candidate_start < busy_end and candidate_end > busy_start:
+                        overlap = True
+                        break
+
+                if not overlap:
+                    slots_for_day.append(
+                        {
+                            "slot_start_iso": candidate_start.isoformat(),
+                            "slot_end_iso": candidate_end.isoformat(),
+                            "slot_speech": _slot_speech(candidate_start, tz_str),
+                        }
+                    )
+
+                cursor = candidate_end
+
+        slots_for_day_sorted = sorted(slots_for_day, key=lambda s: s["slot_start_iso"])
         return {
-            "available": len(busy_slots) == 0,
-            "busy": busy_slots,
-            "window": {"start": start_iso, "end": end_iso, "timeZone": tz_str},
+            "available": requested_available,
+            # "busy": busy_slots,
+            "day": _day_label(day_dt, tz_str),
+            "available_slots": [_time_only_speech(datetime.fromisoformat(slot["slot_start_iso"]), tz_str) for slot in slots_for_day_sorted],
+            "slots_in_day": len(slots_for_day_sorted) > 0,
         }
 
     async def create_reservation(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
@@ -278,6 +327,19 @@ class ReservationService:
             "message": f"Reserva confirmada para {arguments.get('date')} a las {arguments.get('time')} ({tz_str})",
         }
 
+    def _recent_suggestions(self, user_key: str, now: datetime) -> List[str]:
+        """Return slot_start_iso values recently suggested for this user."""
+        if not user_key:
+            return []
+        entries = _SUGGESTION_MEMORY.get(user_key, [])
+        return [slot for slot, ts in entries if now - ts < SUGGESTION_MEMORY_TTL]
+
+    def _remember_suggestion(self, user_key: str, slot_iso: str, now: datetime) -> None:
+        """Persist the last suggestion for the user to rotate on subsequent calls."""
+        if not user_key:
+            return
+        _SUGGESTION_MEMORY.setdefault(user_key, []).append((slot_iso, now))
+
     async def list_next_slots(self, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """
         Devuelve las N horas disponibles más cercanas (mañana/tarde) empezando desde 'desde' o desde hoy.
@@ -313,6 +375,10 @@ class ReservationService:
             desde_str = None
 
         normalized_desde = search_date.isoformat() if desde_str else None
+
+        user_key = str(arguments.get("chat_id") or arguments.get("customer_number") or "").strip()
+        memory_now = datetime.now(tzinfo)
+        recent_suggestions = set(self._recent_suggestions(user_key, memory_now)) if user_key else set()
 
         slots: List[Dict[str, Any]] = []
         day_offset = 0
@@ -352,6 +418,9 @@ class ReservationService:
                             overlap = True
                             break
 
+                    if user_key and candidate_start.isoformat() in recent_suggestions:
+                        overlap = True  # treat recently suggested slots as unavailable for this user
+
                     if not overlap:
                         slots.append(
                             {
@@ -365,7 +434,23 @@ class ReservationService:
 
         slots_sorted = sorted(slots, key=lambda s: s["slot_start_iso"])
         top_slots = slots_sorted[:top_n]
-        suggested = top_slots[0] if top_slots else None
+
+        candidate = None
+        for slot in top_slots:
+            if slot["slot_start_iso"] in recent_suggestions:
+                continue  # treat already suggested slots as unavailable for this user
+            if slot["slot_start_iso"] not in recent_suggestions:
+                candidate = slot
+                break
+
+        if candidate is None and top_slots and user_key:
+            # Rotate again if all options have been offered in the last TTL window.
+            _SUGGESTION_MEMORY[user_key] = []
+            candidate = top_slots[0]
+
+        suggested = candidate or (top_slots[0] if top_slots else None)
+        if suggested and user_key:
+            self._remember_suggestion(user_key, suggested["slot_start_iso"], memory_now)
 
         return {
             "available_slots": top_slots,

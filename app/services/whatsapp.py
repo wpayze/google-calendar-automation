@@ -68,15 +68,6 @@ VALID_CHOICES: Dict[str, Optional[Set[str]]] = {
 
 
 # -------------------- Slot helpers --------------------
-def _slot_options(base_day: date) -> List[str]:
-    times = [time(10, 0), time(12, 0), time(16, 0)]
-    slots: List[str] = []
-    for idx, t in enumerate(times):
-        dt = datetime.combine(base_day + timedelta(days=idx), t)
-        slots.append(dt.strftime("%d-%m-%Y %H:%M"))
-    return slots
-
-
 def _get_reservation_service() -> Optional[ReservationService]:
     global _reservation_service
     if _reservation_service is not None:
